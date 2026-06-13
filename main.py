@@ -41,7 +41,8 @@ PHOTO_MODULES   = os.path.join(IMAGES_DATA_DIR, "modules.jpg")
 PHOTO_SONYA_SAD = os.path.join(IMAGES_DATA_DIR, "sonya_sad.jpg")
 PHOTO_MENU      = os.path.join(IMAGES_DATA_DIR, "menu.jpg")
 
-PHOTO_IDS_FILE = os.path.join(DATA_DIR, "photo_ids.json")
+PHOTO_IDS_FILE    = os.path.join(DATA_DIR, "photo_ids.json")
+STOCK_MODULES_DIR = os.path.join(BASE_DIR, "stock_modules")
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(message)s",
@@ -95,6 +96,7 @@ def init_system():
         })
     if not os.path.exists(PHOTO_IDS_FILE):
         save_json(PHOTO_IDS_FILE, {})
+    os.makedirs(STOCK_MODULES_DIR, exist_ok=True)
 
 def is_user_authorized(tg_id: str) -> bool:
     users = load_json(USERS_FILE)
@@ -485,7 +487,8 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb_rows.append([
                 InlineKeyboardButton(f"🗑 {m['name']}.py", callback_data=f"mod_delete_{m['name']}")
             ])
-        kb_rows.append([InlineKeyboardButton("➕ Установить модуль", callback_data="mod_install")])
+        kb_rows.append([InlineKeyboardButton("🛒 Магазин модулей", callback_data="mod_shop")])
+        kb_rows.append([InlineKeyboardButton("➕ Установить своё .py", callback_data="mod_install")])
         kb_rows.append([InlineKeyboardButton("◀️ Назад", callback_data="back_main")])
         kb = InlineKeyboardMarkup(kb_rows)
 
@@ -566,6 +569,121 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             get_cancel_kb()
         )
         return "MODULE_INSTALL"
+
+    # ── Магазин стоковых модулей ──
+    if data == "mod_shop":
+        # Читаем список доступных стоковых модулей
+        stock = []
+        if os.path.exists(STOCK_MODULES_DIR):
+            for fname in sorted(os.listdir(STOCK_MODULES_DIR)):
+                if fname.endswith(".py"):
+                    stock.append(fname[:-3])
+
+        if not stock:
+            await send_plain(query.message, "🛒 Магазин пока пуст. Скоро появятся модули!", get_cancel_kb())
+            return "MENU"
+
+        # Читаем уже установленные модули юзера
+        m_file = os.path.join(DATA_DIR, f"user_modules_{tg_id}.json")
+        async with _file_lock:
+            m_data = load_json(m_file)
+        installed = {m["name"] for m in m_data.get("modules", [])}
+
+        # Строим клавиатуру магазина
+        kb_rows = []
+        lines = []
+        for mod in stock:
+            if mod in installed:
+                kb_rows.append([InlineKeyboardButton(f"✅ {mod} (установлен)", callback_data="mod_shop")])
+                lines.append(f"  ✅ {mod}.py — установлен")
+            else:
+                kb_rows.append([InlineKeyboardButton(f"📥 {mod}", callback_data=f"mod_get_{mod}")])
+                lines.append(f"  📥 {mod}.py")
+        kb_rows.append([InlineKeyboardButton("◀️ Назад", callback_data="u_modules")])
+
+        await send_photo(
+            query.message, PHOTO_MODULES,
+            f"🛒 Магазин модулей\n\n"
+            f"Выбери модуль для установки:\n\n"
+            + "\n".join(lines) +
+            f"\n\nНажми на модуль чтобы установить.",
+            InlineKeyboardMarkup(kb_rows)
+        )
+        return "MENU"
+
+    # ── Установка стокового модуля ──
+    if data.startswith("mod_get_"):
+        mod_name = data[len("mod_get_"):]
+        src_path = os.path.join(STOCK_MODULES_DIR, f"{mod_name}.py")
+
+        if not os.path.exists(src_path):
+            await send_plain(query.message, f"❌ Модуль {mod_name} не найден в магазине.", get_cancel_kb())
+            return "MENU"
+
+        # Проверяем лимит
+        m_file = os.path.join(DATA_DIR, f"user_modules_{tg_id}.json")
+        async with _file_lock:
+            m_data = load_json(m_file)
+        if len(m_data.get("modules", [])) >= 5:
+            await send_plain(query.message, "⚠️ Достигнут лимит модулей (5/5). Удалите один для установки нового.", get_user_kb())
+            return "MENU"
+
+        # Копируем файл в папку юзера
+        import shutil
+        user_dir = os.path.join(MODULES_DIR, f"user_{tg_id}")
+        os.makedirs(user_dir, exist_ok=True)
+        dst_path = os.path.join(user_dir, f"{mod_name}.py")
+        shutil.copy2(src_path, dst_path)
+
+        # Копируем menu.json модуля если есть
+        menu_src = os.path.join(STOCK_MODULES_DIR, f"{mod_name}_menu.json")
+        if os.path.exists(menu_src):
+            shutil.copy2(menu_src, os.path.join(user_dir, f"{mod_name}_menu.json"))
+
+        # Обновляем реестр
+        async with _file_lock:
+            m_data.setdefault("modules", [])
+            # Не дублируем если уже есть
+            if not any(m["name"] == mod_name for m in m_data["modules"]):
+                m_data["modules"].append({
+                    "name": mod_name,
+                    "date": datetime.now().strftime("%d.%m.%Y"),
+                    "source": "shop"
+                })
+            save_json(m_file, m_data)
+
+        # Перезапускаем юзербота если онлайн
+        if tg_id in USER_BOTS:
+            async with _file_lock:
+                users_reload = load_json(USERS_FILE)
+            u_info = users_reload.get(tg_id, {})
+            if u_info.get("api_id") and u_info.get("api_hash"):
+                await start_user_bot(tg_id, int(u_info["api_id"]), u_info["api_hash"])
+            await send_plain(query.message, f"✅ Модуль {mod_name}.py установлен и загружен в юзербот!", None)
+        else:
+            await send_plain(query.message, f"✅ Модуль {mod_name}.py установлен. Запустите юзербота для активации.", None)
+
+        # Возвращаемся в магазин
+        stock = [f[:-3] for f in sorted(os.listdir(STOCK_MODULES_DIR)) if f.endswith(".py")]
+        async with _file_lock:
+            m_data = load_json(m_file)
+        installed = {m["name"] for m in m_data.get("modules", [])}
+        kb_rows = []
+        lines = []
+        for mod in stock:
+            if mod in installed:
+                kb_rows.append([InlineKeyboardButton(f"✅ {mod} (установлен)", callback_data="mod_shop")])
+                lines.append(f"  ✅ {mod}.py — установлен")
+            else:
+                kb_rows.append([InlineKeyboardButton(f"📥 {mod}", callback_data=f"mod_get_{mod}")])
+                lines.append(f"  📥 {mod}.py")
+        kb_rows.append([InlineKeyboardButton("◀️ Назад", callback_data="u_modules")])
+        await send_photo(
+            query.message, PHOTO_MODULES,
+            f"🛒 Магазин модулей\n\n" + "\n".join(lines) + "\n\nНажми на модуль чтобы установить.",
+            InlineKeyboardMarkup(kb_rows)
+        )
+        return "MENU"
 
     return "MENU"
 

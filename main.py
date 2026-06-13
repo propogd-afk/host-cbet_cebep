@@ -9,6 +9,7 @@ from datetime import datetime
 import aiohttp
 
 from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -567,42 +568,102 @@ async def pinpad_click_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     return "WAIT_CODE"
 
+async def _cleanup_failed_session(tg_id: str, client):
+    """Чистит битую сессию с диска и из памяти."""
+    try:
+        await client.disconnect()
+    except Exception:
+        pass
+    # Удаляем файлы сессии чтобы повторная регистрация не давала "сессия уже создана"
+    for ext in (".session", ".session-journal"):
+        path = os.path.join(DATA_DIR, f"session_{tg_id}{ext}")
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+    if tg_id in USER_BOTS:
+        del USER_BOTS[tg_id]
+
+async def _finish_auth(update, context, tg_id: str, client):
+    """Сохраняет юзера и запускает юзербота после успешной авторизации."""
+    phone = context.user_data.get("phone")
+    async with _file_lock:
+        users = load_json(USERS_FILE)
+        users[tg_id] = {
+            "nick":          context.user_data.get("reg_nick", f"User_{tg_id[:4]}"),
+            "phone":         phone,
+            "api_id":        context.user_data["api_id"],
+            "api_hash":      context.user_data["api_hash"],
+            "authenticated": True,
+            "created_at":    datetime.now().strftime("%d.%m.%Y %H:%M")
+        }
+        save_json(USERS_FILE, users)
+
+    USER_BOTS[tg_id] = client
+    load_user_modules(client, tg_id)
+
+    msg = update.callback_query.message if update.callback_query else update.message
+    await msg.reply_text(
+        "🎉 *Успешно!* Юзербот запущен в облаке.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_user_kb()
+    )
+    return "MENU"
+
 async def _do_sign_in(update, context, tg_id: str, code: str):
     """Финальная авторизация через Telethon после ввода кода с пин-пада."""
-    query            = update.callback_query
-    client           = context.user_data.get("client")
-    phone_code_hash  = context.user_data.get("phone_code_hash")
-    phone            = context.user_data.get("phone")
+    query           = update.callback_query
+    client          = context.user_data.get("client")
+    phone_code_hash = context.user_data.get("phone_code_hash")
+    phone           = context.user_data.get("phone")
 
     try:
         await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+        # Авторизация прошла без 2FA
+        return await _finish_auth(update, context, tg_id, client)
 
-        async with _file_lock:
-            users = load_json(USERS_FILE)
-            users[tg_id] = {
-                "nick":          context.user_data.get("reg_nick", f"User_{tg_id[:4]}"),
-                "phone":         phone,
-                "api_id":        context.user_data["api_id"],
-                "api_hash":      context.user_data["api_hash"],
-                "authenticated": True,
-                "created_at":    datetime.now().strftime("%d.%m.%Y %H:%M")
-            }
-            save_json(USERS_FILE, users)
-
-        USER_BOTS[tg_id] = client
-        load_user_modules(client, tg_id)
-
+    except SessionPasswordNeededError:
+        # У юзера включена двухфакторная аутентификация — запрашиваем пароль
+        logger.info(f"2FA требуется для {tg_id}")
+        context.user_data["awaiting_2fa"] = True
         await query.message.reply_text(
-            "🎉 *Успешно!* Юзербот запущен в облаке.",
+            "🔐 *Двухфакторная аутентификация*\n\n"
+            "На вашем аккаунте включена 2FA.\n"
+            "Введите облачный пароль Telegram:",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=get_user_kb()
+            reply_markup=get_cancel_kb()
         )
-        return "MENU"
+        return "WAIT_2FA"
 
     except Exception as e:
         logger.error(f"sign_in error для {tg_id}: {e}")
+        await _cleanup_failed_session(tg_id, client)
         await query.message.reply_text(
-            f"❌ Неверный код: `{e}`\n\nСброс. Начните заново — /start",
+            f"❌ Ошибка входа: `{e}`\n\nПопробуйте снова — /start",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_guest_kb()
+        )
+        return "MENU"
+
+
+# ─── WAIT_2FA: Ввод облачного пароля 2FA ──────────────────────────
+
+async def wait_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Принимает облачный пароль и завершает авторизацию."""
+    tg_id    = str(update.effective_user.id)
+    password = update.message.text.strip()
+    client   = context.user_data.get("client")
+
+    try:
+        await client.sign_in(password=password)
+        return await _finish_auth(update, context, tg_id, client)
+
+    except Exception as e:
+        logger.error(f"2FA error для {tg_id}: {e}")
+        await _cleanup_failed_session(tg_id, client)
+        await update.message.reply_text(
+            f"❌ Неверный пароль 2FA: `{e}`\n\nПопробуйте снова — /start",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=get_guest_kb()
         )
@@ -899,6 +960,10 @@ def main():
                 # Пин-пад — только callback кнопки
                 CallbackQueryHandler(pinpad_click_handler, pattern="^pin_"),
                 CallbackQueryHandler(menu_router, pattern="^back_main$")
+            ],
+            "WAIT_2FA": [
+                CallbackQueryHandler(menu_router, pattern="^back_main$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, wait_2fa)
             ],
             "MODULE_INSTALL": [
                 CallbackQueryHandler(menu_router),

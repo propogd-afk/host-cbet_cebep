@@ -155,14 +155,16 @@ async def auto_run_existing_bots():
     users = load_json(USERS_FILE)
     for tg_id, info in users.items():
         session_file = os.path.join(DATA_DIR, f"session_{tg_id}.session")
-        if info.get("authenticated") and os.path.exists(session_file):
-            try:
-                asyncio.create_task(
-                    start_user_bot(tg_id, int(info["api_id"]), info["api_hash"])
-                )
-                logger.info(f"Автозапуск юзербота {tg_id}")
-            except Exception as e:
-                logger.error(f"Не удалось поднять юзербота {tg_id}: {e}")
+        if not info.get("authenticated") or not os.path.exists(session_file):
+            continue
+        if not info.get("api_id") or not info.get("api_hash"):
+            logger.warning(f"Пропускаем автозапуск {tg_id} — нет api_id/api_hash")
+            continue
+        try:
+            logger.info(f"Автозапуск юзербота {tg_id}")
+            await start_user_bot(tg_id, int(info["api_id"]), info["api_hash"])
+        except Exception as e:
+            logger.error(f"Не удалось поднять юзербота {tg_id}: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -246,6 +248,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Проверка сессии — выдача гостевого или юзер-меню."""
     tg_id = str(update.effective_user.id)
     context.user_data.clear()
+    logger.info(f"/start от юзера {tg_id}")
 
     async with _file_lock:
         is_auth = is_user_authorized(tg_id)
@@ -302,6 +305,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query  = update.callback_query
     tg_id  = str(query.from_user.id)
     data   = query.data
+    logger.info(f"menu_router: юзер {tg_id} нажал '{data}'")
     await query.answer()
 
     async with _file_lock:
@@ -949,12 +953,11 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     init_system()
 
-    # Автоподнятие сессий
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(auto_run_existing_bots())
+    async def post_init(application):
+        """Запускается после старта Application — безопасное место для задач."""
+        await auto_run_existing_bots()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
 
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", cmd_start)],
@@ -1015,7 +1018,10 @@ def main():
             CallbackQueryHandler(menu_router)
         ],
         per_message=False,
-        allow_reentry=True
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
+        conversation_timeout=600
     )
 
     async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):

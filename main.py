@@ -145,6 +145,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         has_session = "✅ Активна" if os.path.exists(os.path.join(get_user_modules_dir(tg_id), str(phone) + ".session")) else "❌ Отсутствует"
         text = "👤 <b>Личный кабинет</b>\n\n<b>Ник:</b> " + str(user_data['nick']) + "\n<b>Телефон:</b> " + str(phone) + "\n<b>Сессия на сервере:</b> " + has_session
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="to_main_menu")]]), parse_mode="HTML")
+    elif data == "menu_modules":
+        await query.edit_message_text("⚙️ <b>Управление модулями</b>\n\nВ данный момент нет доступных модулей для установки.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="to_main_menu")]]), parse_mode="HTML")
     elif data == "menu_logout":
         if phone:
             users = load_file(USERS_FILE)
@@ -404,4 +406,5 @@ def main():
     print("🚀 Хостинг-панель запущена!")
     app.run_polling()
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()

@@ -252,12 +252,34 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users   = load_json(USERS_FILE)
 
     if is_auth:
+        u_info = users[tg_id]
+
+        # Защита от битой записи — если нет api_id/api_hash, сбрасываем сессию
+        if not u_info.get("api_id") or not u_info.get("api_hash"):
+            logger.warning(f"Битая запись в users.json для {tg_id}, сбрасываем.")
+            async with _file_lock:
+                users_w = load_json(USERS_FILE)
+                if tg_id in users_w:
+                    users_w[tg_id]["authenticated"] = False
+                    save_json(USERS_FILE, users_w)
+            for ext in (".session", ".session-journal"):
+                p = os.path.join(DATA_DIR, f"session_{tg_id}{ext}")
+                if os.path.exists(p):
+                    try: os.remove(p)
+                    except Exception: pass
+            await update.message.reply_text(
+                "⚠️ Обнаружена повреждённая сессия — она была сброшена.\n\n"
+                "👋 *UserBot Manager*\n\nНажмите кнопку ниже для настройки.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_guest_kb()
+            )
+            return "MENU"
+
         if tg_id not in USER_BOTS:
-            u_info = users[tg_id]
             asyncio.create_task(
                 start_user_bot(tg_id, int(u_info["api_id"]), u_info["api_hash"])
             )
-        nick = users[tg_id].get("nick", "Пользователь")
+        nick = u_info.get("nick", "Пользователь")
         await update.message.reply_text(
             f"🏠 *Главное меню*\n\nДобро пожаловать, *{nick}*!\n"
             f"Ваш юзербот {'🟢 активен' if tg_id in USER_BOTS else '🔴 запускается...'}",
@@ -996,6 +1018,18 @@ def main():
         allow_reentry=True
     )
 
+    async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        logger.error(f"Необработанное исключение: {context.error}", exc_info=context.error)
+        if isinstance(update, Update) and update.effective_message:
+            try:
+                await update.effective_message.reply_text(
+                    "⚠️ Произошла внутренняя ошибка. Попробуйте /start",
+                    reply_markup=get_guest_kb()
+                )
+            except Exception:
+                pass
+
+    app.add_error_handler(global_error_handler)
     app.add_handler(conv)
     logger.info("✅ UserBot Manager запущен!")
     app.run_polling(drop_pending_updates=True)

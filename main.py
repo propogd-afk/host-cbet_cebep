@@ -1,255 +1,207 @@
+"""
+Регистрация UserBot через Telethon.
+Код вводится через инлайн-кнопки — Telegram не банит.
+"""
+
 import os
 import json
 import logging
+import asyncio
+import threading
 import fcntl
 from datetime import datetime, timezone
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ParseMode,
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
 from telegram.ext import (
-    Updater,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    Filters,
-    CallbackContext,
+    Updater, CommandHandler, CallbackQueryHandler,
+    MessageHandler, Filters, CallbackContext,
+)
+from telethon import TelegramClient
+from telethon.errors import (
+    SessionPasswordNeededError,
+    PhoneCodeInvalidError,
+    PhoneCodeExpiredError,
+    PasswordHashInvalidError,
+    FloodWaitError,
 )
 
 # ─────────────────────────────────────────────
 # КОНФИГУРАЦИЯ
 # ─────────────────────────────────────────────
-BOT_TOKEN      = os.environ.get("BOT_TOKEN", "8989430238:AAFX33wQAtm4T_sV0OBwrTrCj4kbax-jwOU")
-ADMIN_IDS_RAW  = os.environ.get("ADMIN_IDS", "1837883882")
-ADMIN_IDS      = set(ADMIN_IDS_RAW.split(",")) if ADMIN_IDS_RAW else set()
+BOT_TOKEN   = os.environ.get("BOT_TOKEN", "")
+ADMIN_IDS   = set(os.environ.get("ADMIN_IDS", "1837883882").split(","))
 
-BASE_DIR        = "/app"
-DATA_DIR        = os.path.join(BASE_DIR, "data")
-PUBLIC_MODS_DIR = os.path.join(BASE_DIR, "public_modules")
-MODULES_DIR     = os.path.join(BASE_DIR, "modules")
+BASE_DIR      = "/app"
+DATA_DIR      = os.path.join(BASE_DIR, "data")
+SESSIONS_DIR  = os.path.join(DATA_DIR, "sessions")   # Telethon .session файлы
+USERS_FILE    = os.path.join(DATA_DIR, "users.json")
 
-USERS_FILE         = os.path.join(DATA_DIR, "users.json")
-AUTORESPONDER_FILE = os.path.join(DATA_DIR, "autoresponder_settings.json")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN не задан!")
 
-# ─────────────────────────────────────────────
-# ЛОГИРОВАНИЕ
-# ─────────────────────────────────────────────
 logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
-# JSON — атомарное чтение/запись
+# JSON
 # ─────────────────────────────────────────────
-def load_file(filepath: str) -> dict:
+def load_json(path: str) -> dict:
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             fcntl.flock(f, fcntl.LOCK_SH)
-            data = json.load(f)
+            d = json.load(f)
             fcntl.flock(f, fcntl.LOCK_UN)
-            return data
-    except FileNotFoundError:
-        return {}
-    except json.JSONDecodeError as e:
-        logger.error("Повреждён JSON %s: %s", filepath, e)
+            return d
+    except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
-
-def save_file(filepath: str, data: dict) -> None:
-    tmp = filepath + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-            fcntl.flock(f, fcntl.LOCK_UN)
-        os.replace(tmp, filepath)
-    except OSError as e:
-        logger.error("Ошибка записи %s: %s", filepath, e)
-        raise
+def save_json(path: str, data: dict):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.flush(); os.fsync(f.fileno())
+        fcntl.flock(f, fcntl.LOCK_UN)
+    os.replace(tmp, path)
 
 
 # ─────────────────────────────────────────────
-# ПОЛЬЗОВАТЕЛИ
+# ASYNCIO в отдельном потоке
+# (python-telegram-bot 13.x синхронный, Telethon асинхронный)
 # ─────────────────────────────────────────────
-def get_user_by_tg_id(tg_id: int):
-    """Ищем пользователя по telegram_id. Возвращаем (phone, data) или (None, None)."""
-    users = load_file(USERS_FILE)
-    tg_id_str = str(tg_id)
-    for phone, data in users.items():
-        if str(data.get("telegram_id")) == tg_id_str:
-            return phone, data
-    return None, None
+_loop = asyncio.new_event_loop()
+
+def _start_loop(loop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+threading.Thread(target=_start_loop, args=(_loop,), daemon=True).start()
+
+def run_async(coro):
+    """Запускаем корутину из синхронного кода и ждём результата."""
+    fut = asyncio.run_coroutine_threadsafe(coro, _loop)
+    return fut.result(timeout=60)
 
 
-def is_admin(tg_id: int) -> bool:
-    """Проверяем: либо в ADMIN_IDS из env, либо флаг is_admin в users.json."""
-    if str(tg_id) in ADMIN_IDS:
-        return True
-    _, data = get_user_by_tg_id(tg_id)
-    return bool(data and data.get("is_admin"))
+# ─────────────────────────────────────────────
+# КЛАВИАТУРА: цифровая панель для ввода кода
+# ─────────────────────────────────────────────
+def kb_code_pad(entered: str, total: int = 5) -> InlineKeyboardMarkup:
+    """
+    Цифровая клавиатура. entered — уже введённые цифры.
+    Отображаем прогресс: ● ● ○ ○ ○
+    """
+    dots = "●" * len(entered) + "○" * (total - len(entered))
+    rows = [
+        # Прогресс (не кнопка)
+        [InlineKeyboardButton(f"Код: {dots}", callback_data="noop")],
+        # Цифры
+        [
+            InlineKeyboardButton("1", callback_data="code_1"),
+            InlineKeyboardButton("2", callback_data="code_2"),
+            InlineKeyboardButton("3", callback_data="code_3"),
+        ],
+        [
+            InlineKeyboardButton("4", callback_data="code_4"),
+            InlineKeyboardButton("5", callback_data="code_5"),
+            InlineKeyboardButton("6", callback_data="code_6"),
+        ],
+        [
+            InlineKeyboardButton("7", callback_data="code_7"),
+            InlineKeyboardButton("8", callback_data="code_8"),
+            InlineKeyboardButton("9", callback_data="code_9"),
+        ],
+        [
+            InlineKeyboardButton("⌫ Стереть", callback_data="code_del"),
+            InlineKeyboardButton("0", callback_data="code_0"),
+            InlineKeyboardButton("✅ ОК",      callback_data="code_ok"),
+        ],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+def kb_2fa_pad(entered: str) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для 2FA пароля — символы скрыты (звёздочки).
+    Добавляем цифры + кнопку «ввести буквы» через сообщение.
+    """
+    hidden = "●" * len(entered)
+    rows = [
+        [InlineKeyboardButton(f"Пароль: {hidden or '○○○○○'}", callback_data="noop")],
+        [
+            InlineKeyboardButton("1", callback_data="2fa_1"),
+            InlineKeyboardButton("2", callback_data="2fa_2"),
+            InlineKeyboardButton("3", callback_data="2fa_3"),
+        ],
+        [
+            InlineKeyboardButton("4", callback_data="2fa_4"),
+            InlineKeyboardButton("5", callback_data="2fa_5"),
+            InlineKeyboardButton("6", callback_data="2fa_6"),
+        ],
+        [
+            InlineKeyboardButton("7", callback_data="2fa_7"),
+            InlineKeyboardButton("8", callback_data="2fa_8"),
+            InlineKeyboardButton("9", callback_data="2fa_9"),
+        ],
+        [
+            InlineKeyboardButton("⌫ Стереть",       callback_data="2fa_del"),
+            InlineKeyboardButton("0",                callback_data="2fa_0"),
+            InlineKeyboardButton("✅ Войти",          callback_data="2fa_ok"),
+        ],
+        # Если пароль содержит буквы — пусть напишет текстом
+        [InlineKeyboardButton("⌨️ Ввести текстом", callback_data="2fa_text")],
+    ]
+    return InlineKeyboardMarkup(rows)
 
 
 # ─────────────────────────────────────────────
 # ИНИЦИАЛИЗАЦИЯ
 # ─────────────────────────────────────────────
 def init_system():
-    for d in (DATA_DIR, PUBLIC_MODS_DIR, MODULES_DIR):
+    for d in (DATA_DIR, SESSIONS_DIR):
         os.makedirs(d, exist_ok=True)
-        logger.info("Директория: %s", d)
-    for fp in (USERS_FILE, AUTORESPONDER_FILE):
-        if not os.path.exists(fp):
-            save_file(fp, {})
-            logger.info("Создан файл: %s", fp)
+    if not os.path.exists(USERS_FILE):
+        save_json(USERS_FILE, {})
 
 
 # ─────────────────────────────────────────────
-# КЛАВИАТУРЫ
+# TELETHON: создать клиент для пользователя
 # ─────────────────────────────────────────────
-def kb_welcome() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 Регистрация", callback_data="auth_reg")],
-        [InlineKeyboardButton("🔑 Вход",        callback_data="auth_login")],
-    ])
-
-
-def kb_main(tg_id: int) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton("⚙️ Модули",  callback_data="menu_modules")],
-        [InlineKeyboardButton("👤 Профиль", callback_data="menu_profile")],
-    ]
-    if is_admin(tg_id):
-        rows.append([InlineKeyboardButton("🔧 Админ-панель", callback_data="menu_admin")])
-    return InlineKeyboardMarkup(rows)
-
-
-def kb_back(target: str = "back_start") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("◀️ Назад", callback_data=target)]
-    ])
-
-
-# ─────────────────────────────────────────────
-# ХЕЛПЕР: отправить или отредактировать сообщение
-# ─────────────────────────────────────────────
-def send_or_edit(update: Update, text: str, markup=None, parse_mode=None):
-    """
-    Универсальная отправка.
-    Если пришёл callback — редактируем существующее сообщение.
-    Если пришло message — отправляем новое.
-    Это решает краш при вызове start() из callback-контекста.
-    """
-    kwargs = {"text": text}
-    if markup:
-        kwargs["reply_markup"] = markup
-    if parse_mode:
-        kwargs["parse_mode"] = parse_mode
-
-    if update.callback_query:
-        update.callback_query.edit_message_text(**kwargs)
-    elif update.message:
-        update.message.reply_text(**kwargs)
-
-
-# ─────────────────────────────────────────────
-# ЭКРАНЫ
-# ─────────────────────────────────────────────
-def screen_start(update: Update, context: CallbackContext):
-    """Главный экран — определяет авторизован ли пользователь."""
-    tg_id = update.effective_user.id
-    _, user_data = get_user_by_tg_id(tg_id)
-
-    if user_data:
-        nick = user_data.get("nick", "пользователь")
-        send_or_edit(
-            update,
-            f"🏠 *Главное меню*\nПривет, *{nick}*!",
-            markup=kb_main(tg_id),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-    else:
-        send_or_edit(
-            update,
-            "👋 *Добро пожаловать в UserBot Hosting!*\n\nВыберите действие:",
-            markup=kb_welcome(),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-
-
-def screen_modules(update: Update):
-    """Список модулей из /app/public_modules/."""
-    try:
-        files = sorted(f for f in os.listdir(PUBLIC_MODS_DIR) if f.endswith(".py"))
-    except OSError:
-        files = []
-
-    if files:
-        rows = [[InlineKeyboardButton(f"📦 {f}", callback_data=f"mod_{f}")] for f in files]
-    else:
-        rows = [[InlineKeyboardButton("📭 Модулей пока нет", callback_data="noop")]]
-
-    rows.append([InlineKeyboardButton("◀️ Назад", callback_data="back_start")])
-
-    send_or_edit(
-        update,
-        f"⚙️ *Список модулей* ({len(files)} шт.):",
-        markup=InlineKeyboardMarkup(rows),
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-
-def screen_profile(update: Update):
-    tg_id = update.effective_user.id
-    phone, data = get_user_by_tg_id(tg_id)
-
-    if not data:
-        send_or_edit(update, "❌ Профиль не найден. Зарегистрируйтесь через /start")
-        return
-
-    text = (
-        f"👤 *Профиль*\n\n"
-        f"📛 Ник: *{data.get('nick', '—')}*\n"
-        f"📱 Телефон: `{phone}`\n"
-        f"🆔 Telegram ID: `{tg_id}`\n"
-        f"📅 Регистрация: {data.get('registered_at', '—')}\n"
-        f"🔧 Админ: {'✅' if data.get('is_admin') else '❌'}"
-    )
-    send_or_edit(update, text, markup=kb_back(), parse_mode=ParseMode.MARKDOWN)
-
-
-def screen_admin(update: Update):
-    tg_id = update.effective_user.id
-    if not is_admin(tg_id):
-        send_or_edit(update, "🚫 Нет доступа.")
-        return
-
-    users = load_file(USERS_FILE)
-    mods  = [f for f in os.listdir(PUBLIC_MODS_DIR) if f.endswith(".py")]
-
-    text = (
-        f"🔧 *Админ-панель*\n\n"
-        f"👥 Пользователей: *{len(users)}*\n"
-        f"📦 Модулей: *{len(mods)}*\n\n"
-        f"Для загрузки модуля — пришли `.py` файл в чат."
-    )
-    send_or_edit(update, text, markup=kb_back(), parse_mode=ParseMode.MARKDOWN)
+def make_client(tg_id: int, api_id: int, api_hash: str) -> TelegramClient:
+    session_path = os.path.join(SESSIONS_DIR, str(tg_id))
+    return TelegramClient(session_path, api_id, api_hash, loop=_loop)
 
 
 # ─────────────────────────────────────────────
 # ХЕНДЛЕРЫ КОМАНД
 # ─────────────────────────────────────────────
 def cmd_start(update: Update, context: CallbackContext):
-    # Сбрасываем состояние при /start — пользователь всегда может «выйти»
     context.user_data.clear()
-    screen_start(update, context)
+    tg_id = str(update.effective_user.id)
+    users = load_json(USERS_FILE)
+
+    if tg_id in users:
+        nick = users[tg_id].get("nick", "пользователь")
+        update.message.reply_text(
+            f"🏠 Привет, *{nick}*! Главное меню:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚙️ Модули",  callback_data="menu_modules")],
+                [InlineKeyboardButton("👤 Профиль", callback_data="menu_profile")],
+            ])
+        )
+    else:
+        update.message.reply_text(
+            "👋 *UserBot Hosting*\n\nДля начала нужно привязать ваш Telegram-аккаунт.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔗 Привязать аккаунт", callback_data="reg_start")],
+            ])
+        )
 
 
 # ─────────────────────────────────────────────
@@ -257,250 +209,365 @@ def cmd_start(update: Update, context: CallbackContext):
 # ─────────────────────────────────────────────
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    tg_id = query.from_user.id
     data  = query.data or ""
+    tg_id = query.from_user.id
 
-    # Всегда отвечаем на callback — иначе кнопка «зависает»
     try:
         query.answer()
     except Exception:
         pass
 
-    # ── Навигация ────────────────────────────────────────────────
-    if data == "back_start":
-        screen_start(update, context)
-
-    elif data == "noop":
-        pass  # Кнопка-заглушка, уже ответили answer()
-
-    elif data == "menu_modules":
-        screen_modules(update)
-
-    elif data == "menu_profile":
-        screen_profile(update)
-
-    elif data == "menu_admin":
-        screen_admin(update)
-
-    # ── Регистрация ──────────────────────────────────────────────
-    elif data == "auth_reg":
-        _, existing = get_user_by_tg_id(tg_id)
-        if existing:
-            query.edit_message_text("✅ Вы уже зарегистрированы! Используйте /start")
-            return
-        context.user_data["state"] = "REG_NICK"
+    # ── Старт регистрации ────────────────────────────────────────
+    if data == "reg_start":
+        context.user_data.clear()
+        context.user_data["state"] = "REG_PHONE"
         query.edit_message_text(
-            "📝 *Регистрация (1/2)*\n\nПридумайте никнейм (2–32 символа, без пробелов):",
+            "📱 *Шаг 1 из 3: Номер телефона*\n\n"
+            "Введите ваш номер в формате:\n`+79001234567`\n\n"
+            "Просто напишите его в чат:",
             parse_mode=ParseMode.MARKDOWN,
         )
 
-    elif data == "auth_login":
-        _, existing = get_user_by_tg_id(tg_id)
-        if existing:
-            screen_start(update, context)
-        else:
-            context.user_data["state"] = "LOGIN_PHONE"
-            query.edit_message_text(
-                "🔑 *Вход*\n\nВведите номер телефона, указанный при регистрации:",
-                parse_mode=ParseMode.MARKDOWN,
-            )
+    # ── Ввод кода через кнопки ───────────────────────────────────
+    elif data.startswith("code_"):
+        _handle_code_input(update, context, data)
 
-    # ── Просмотр модуля ──────────────────────────────────────────
-    elif data.startswith("mod_"):
-        filename = data[4:]
-        filepath = os.path.join(PUBLIC_MODS_DIR, filename)
-        if os.path.exists(filepath):
-            size = os.path.getsize(filepath)
-            text = (
-                f"📦 *{filename}*\n\n"
-                f"📏 Размер: {size} байт\n\n"
-                f"Для подключения модуля обратитесь к администратору."
-            )
-            send_or_edit(update, text, markup=kb_back("menu_modules"),
-                         parse_mode=ParseMode.MARKDOWN)
-        else:
-            query.answer("❌ Файл не найден", show_alert=True)
+    # ── Ввод 2FA через кнопки ────────────────────────────────────
+    elif data.startswith("2fa_"):
+        _handle_2fa_input(update, context, data)
+
+    # ── Меню ─────────────────────────────────────────────────────
+    elif data == "menu_modules":
+        query.edit_message_text("⚙️ Раздел модулей (в разработке).")
+
+    elif data == "menu_profile":
+        _show_profile(update, context)
+
+    elif data == "noop":
+        pass  # индикаторные кнопки
 
     else:
-        logger.warning("Неизвестный callback: '%s' от %s", data, tg_id)
-        query.answer("⚠️ Неизвестная команда", show_alert=True)
+        query.answer("Неизвестная команда.", show_alert=True)
 
 
 # ─────────────────────────────────────────────
-# ХЕНДЛЕР ТЕКСТОВЫХ СООБЩЕНИЙ (машина состояний)
+# ОБРАБОТКА ВВОДА КОДА (инлайн-клавиатура)
+# ─────────────────────────────────────────────
+def _handle_code_input(update: Update, context: CallbackContext, data: str):
+    query = update.callback_query
+    entered: str = context.user_data.get("code_entered", "")
+
+    action = data[5:]  # "1".."0", "del", "ok"
+
+    if action == "del":
+        entered = entered[:-1]
+    elif action == "ok":
+        if len(entered) < 5:
+            query.answer("Введите все 5 цифр!", show_alert=True)
+            return
+        _submit_code(update, context, entered)
+        return
+    elif action.isdigit() and len(entered) < 5:
+        entered += action
+
+    context.user_data["code_entered"] = entered
+
+    query.edit_message_text(
+        "🔑 *Шаг 2 из 3: Код подтверждения*\n\n"
+        "Telegram отправил вам код.\nВведите его цифра за цифрой:",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=kb_code_pad(entered),
+    )
+
+
+def _submit_code(update: Update, context: CallbackContext, code: str):
+    """Отправляем код в Telethon."""
+    query  = update.callback_query
+    tg_id  = query.from_user.id
+    phone  = context.user_data.get("phone", "")
+    api_id = context.user_data.get("api_id")
+    api_hash = context.user_data.get("api_hash")
+
+    if not all([phone, api_id, api_hash]):
+        query.edit_message_text("❌ Сессия устарела. Начните заново: /start")
+        return
+
+    query.edit_message_text("⏳ Проверяем код...")
+
+    try:
+        client = make_client(tg_id, int(api_id), api_hash)
+        phone_code_hash = context.user_data.get("phone_code_hash", "")
+
+        async def do_sign_in():
+            await client.connect()
+            return await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+
+        run_async(do_sign_in())
+
+        # Успех — сохраняем пользователя
+        _save_user(tg_id, context)
+        query.message.reply_text(
+            "✅ *Аккаунт успешно привязан!*\n\nТеперь вы можете пользоваться модулями.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="noop")],
+            ])
+        )
+
+    except SessionPasswordNeededError:
+        # Включена 2FA
+        context.user_data["state"]        = "WAIT_2FA"
+        context.user_data["2fa_entered"]  = ""
+        context.user_data["tg_client_id"] = tg_id
+        query.message.reply_text(
+            "🔐 *Шаг 3 из 3: Двухэтапная проверка*\n\n"
+            "На вашем аккаунте включён пароль 2FA.\nВведите его:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=kb_2fa_pad(""),
+        )
+
+    except PhoneCodeInvalidError:
+        context.user_data["code_entered"] = ""
+        query.message.reply_text(
+            "❌ *Неверный код.* Попробуйте ещё раз:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=kb_code_pad(""),
+        )
+
+    except PhoneCodeExpiredError:
+        query.message.reply_text(
+            "❌ Код истёк. Начните регистрацию заново: /start"
+        )
+
+    except FloodWaitError as e:
+        query.message.reply_text(
+            f"⏳ Слишком много попыток. Подождите {e.seconds} секунд."
+        )
+
+    except Exception as e:
+        logger.error("Ошибка sign_in: %s", e)
+        query.message.reply_text(f"❌ Ошибка: {e}\n\nПопробуйте /start")
+
+
+# ─────────────────────────────────────────────
+# ОБРАБОТКА 2FA (инлайн-клавиатура)
+# ─────────────────────────────────────────────
+def _handle_2fa_input(update: Update, context: CallbackContext, data: str):
+    query   = update.callback_query
+    entered = context.user_data.get("2fa_entered", "")
+    action  = data[4:]  # "1".."0", "del", "ok", "text"
+
+    if action == "text":
+        context.user_data["state"] = "WAIT_2FA_TEXT"
+        query.edit_message_text(
+            "⌨️ Введите пароль 2FA текстом в чат:\n_(он не будет виден другим)_",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    elif action == "del":
+        entered = entered[:-1]
+
+    elif action == "ok":
+        if not entered:
+            query.answer("Введите пароль!", show_alert=True)
+            return
+        _submit_2fa(update, context, entered)
+        return
+
+    elif action.isdigit():
+        entered += action
+
+    context.user_data["2fa_entered"] = entered
+    query.edit_message_text(
+        "🔐 *Двухэтапная проверка*\n\nВведите пароль 2FA:",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=kb_2fa_pad(entered),
+    )
+
+
+def _submit_2fa(update: Update, context: CallbackContext, password: str):
+    """Отправляем 2FA пароль в Telethon."""
+    query  = update.callback_query if update.callback_query else None
+    tg_id  = update.effective_user.id
+    api_id   = context.user_data.get("api_id")
+    api_hash = context.user_data.get("api_hash")
+
+    msg_func = query.message.reply_text if query else update.message.reply_text
+
+    msg_func("⏳ Проверяем пароль...")
+
+    try:
+        client = make_client(tg_id, int(api_id), api_hash)
+
+        async def do_2fa():
+            await client.connect()
+            return await client.sign_in(password=password)
+
+        run_async(do_2fa())
+
+        _save_user(tg_id, context)
+        msg_func(
+            "✅ *Аккаунт успешно привязан!*",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    except PasswordHashInvalidError:
+        msg_func(
+            "❌ Неверный пароль 2FA. Попробуйте ещё раз:",
+            reply_markup=kb_2fa_pad(""),
+        )
+        context.user_data["2fa_entered"] = ""
+
+    except Exception as e:
+        logger.error("Ошибка 2FA: %s", e)
+        msg_func(f"❌ Ошибка: {e}")
+
+
+# ─────────────────────────────────────────────
+# ХЕНДЛЕР ТЕКСТОВЫХ СООБЩЕНИЙ
 # ─────────────────────────────────────────────
 def handle_text(update: Update, context: CallbackContext):
     if not update.message:
         return
 
     tg_id = update.effective_user.id
-    text  = update.message.text.strip() if update.message.text else ""
+    text  = update.message.text.strip()
     state = context.user_data.get("state")
 
-    # ── Регистрация: шаг 1 — ник ─────────────────────────────────
-    if state == "REG_NICK":
-        if len(text) < 2 or len(text) > 32 or " " in text:
-            update.message.reply_text(
-                "⚠️ Никнейм: 2–32 символа, без пробелов. Попробуйте ещё раз:"
-            )
-            return
-
-        users = load_file(USERS_FILE)
-        if any(d.get("nick", "").lower() == text.lower() for d in users.values()):
-            update.message.reply_text(f"❌ Ник *{text}* занят. Введите другой:",
+    # ── Шаг 1: номер телефона ────────────────────────────────────
+    if state == "REG_PHONE":
+        phone = "".join(c for c in text if c.isdigit() or c == "+")
+        if len(phone) < 7:
+            update.message.reply_text("⚠️ Некорректный номер. Пример: `+79001234567`",
                                       parse_mode=ParseMode.MARKDOWN)
             return
 
-        context.user_data.update({"state": "REG_PHONE", "nick": text})
+        context.user_data["phone"] = phone
+        context.user_data["state"] = "REG_API_ID"
         update.message.reply_text(
-            f"✅ Ник *{text}* свободен!\n\n📱 *Регистрация (2/2)*\nВведите номер телефона:",
+            "🔑 *Шаг 1.5: API данные*\n\n"
+            "Для работы UserBot нужны ваши `api_id` и `api_hash`.\n\n"
+            "Получить их: [my.telegram.org](https://my.telegram.org) → "
+            "API development tools\n\n"
+            "Введите `api_id` (число):",
             parse_mode=ParseMode.MARKDOWN,
+            disable_web_page_preview=True,
         )
         return
 
-    # ── Регистрация: шаг 2 — телефон ─────────────────────────────
-    if state == "REG_PHONE":
-        # Простая нормализация: оставляем только цифры и '+'
-        phone = "".join(c for c in text if c.isdigit() or c == "+")
-        if len(phone) < 7:
-            update.message.reply_text("⚠️ Некорректный номер. Попробуйте ещё раз (например: +79001234567):")
+    # ── Шаг 1.5а: api_id ─────────────────────────────────────────
+    if state == "REG_API_ID":
+        if not text.isdigit():
+            update.message.reply_text("⚠️ api_id — это число. Попробуйте ещё раз:")
             return
-
-        users = load_file(USERS_FILE)
-        if phone in users:
-            update.message.reply_text("❌ Этот номер уже зарегистрирован. Используйте /start → Вход")
-            context.user_data.clear()
-            return
-
-        nick = context.user_data.get("nick", "user")
-        now  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-        users[phone] = {
-            "nick":          nick,
-            "telegram_id":   tg_id,
-            "registered_at": now,
-            "is_admin":      False,
-            "modules":       [],
-        }
-        save_file(USERS_FILE, users)
-        context.user_data.clear()
-
-        logger.info("Новый пользователь: %s (%s) tg_id=%s", nick, phone, tg_id)
-
-        update.message.reply_text(
-            f"🎉 *Регистрация завершена!*\n\n"
-            f"Добро пожаловать, *{nick}*!\n"
-            f"Используй меню ниже 👇",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=kb_main(tg_id),
-        )
+        context.user_data["api_id"] = int(text)
+        context.user_data["state"]  = "REG_API_HASH"
+        update.message.reply_text("Теперь введите `api_hash` (длинная строка):",
+                                  parse_mode=ParseMode.MARKDOWN)
         return
 
-    # ── Вход: телефон ─────────────────────────────────────────────
-    if state == "LOGIN_PHONE":
-        phone = "".join(c for c in text if c.isdigit() or c == "+")
-        users = load_file(USERS_FILE)
-
-        if phone in users and str(users[phone].get("telegram_id")) == str(tg_id):
-            context.user_data.clear()
-            update.message.reply_text(
-                f"✅ Добро пожаловать, *{users[phone].get('nick')}*!",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=kb_main(tg_id),
-            )
-        else:
-            update.message.reply_text(
-                "❌ Номер не найден или привязан к другому аккаунту.\n"
-                "Попробуйте ещё раз или зарегистрируйтесь: /start"
-            )
-            context.user_data.clear()
+    # ── Шаг 1.5б: api_hash ───────────────────────────────────────
+    if state == "REG_API_HASH":
+        context.user_data["api_hash"] = text
+        context.user_data["state"]    = "WAIT_CODE"
+        _send_phone_code(update, context)
         return
 
-    # ── Нет активного состояния ────────────────────────────────────
-    update.message.reply_text("Используйте /start для навигации.")
+    # ── Шаг 3 (текстовый ввод 2FA) ───────────────────────────────
+    if state == "WAIT_2FA_TEXT":
+        context.user_data["state"] = None
+        _submit_2fa(update, context, text)
+        return
+
+    update.message.reply_text("Используйте /start")
 
 
 # ─────────────────────────────────────────────
-# ХЕНДЛЕР ДОКУМЕНТОВ (загрузка модулей)
+# ОТПРАВКА КОДА НА ТЕЛЕФОН
 # ─────────────────────────────────────────────
-def handle_document(update: Update, context: CallbackContext):
-    """
-    Только для администраторов.
-    Проверяем файл через compile() перед сохранением.
-    """
-    if not update.message or not update.message.document:
-        return
+def _send_phone_code(update: Update, context: CallbackContext):
+    """Вызываем Telethon: отправить SMS/код в Telegram."""
+    tg_id    = update.effective_user.id
+    phone    = context.user_data.get("phone")
+    api_id   = context.user_data.get("api_id")
+    api_hash = context.user_data.get("api_hash")
 
-    tg_id = update.effective_user.id
-
-    if not is_admin(tg_id):
-        update.message.reply_text("🚫 Загрузка модулей доступна только администраторам.")
-        return
-
-    doc = update.message.document
-    if not doc.file_name.endswith(".py"):
-        update.message.reply_text("⚠️ Принимаются только файлы `.py`")
-        return
-
-    if doc.file_size > 512 * 1024:  # 512 KB максимум
-        update.message.reply_text("⚠️ Файл слишком большой (максимум 512 КБ)")
-        return
-
-    # Скачиваем во временный файл
-    tmp_path  = os.path.join(DATA_DIR, f"_tmp_{doc.file_name}")
-    dest_path = os.path.join(PUBLIC_MODS_DIR, doc.file_name)
+    update.message.reply_text("📲 Отправляем код на ваш номер...")
 
     try:
-        tg_file = context.bot.get_file(doc.file_id)
-        tg_file.download(tmp_path)
+        client = make_client(tg_id, api_id, api_hash)
 
-        # Проверяем синтаксис Python
-        with open(tmp_path, "r", encoding="utf-8") as f:
-            source = f.read()
+        async def do_send():
+            await client.connect()
+            result = await client.send_code_request(phone)
+            return result.phone_code_hash
 
-        try:
-            compile(source, doc.file_name, "exec")
-        except SyntaxError as e:
-            os.remove(tmp_path)
-            update.message.reply_text(
-                f"❌ *Синтаксическая ошибка в модуле:*\n\n"
-                f"`{e.msg}` (строка {e.lineno})\n\n"
-                f"Исправьте и загрузите снова.",
-                parse_mode=ParseMode.MARKDOWN,
-            )
-            return
-
-        # Всё ок — перемещаем в public_modules
-        os.replace(tmp_path, dest_path)
-        logger.info("Модуль загружен: %s (admin tg_id=%s)", doc.file_name, tg_id)
+        phone_code_hash = run_async(do_send())
+        context.user_data["phone_code_hash"] = phone_code_hash
+        context.user_data["code_entered"]    = ""
 
         update.message.reply_text(
-            f"✅ Модуль *{doc.file_name}* успешно загружен!\n"
-            f"Он доступен пользователям в разделе «Модули».",
+            "📬 *Код отправлен!*\n\n"
+            "Telegram прислал вам код.\nВведите его цифра за цифрой:",
             parse_mode=ParseMode.MARKDOWN,
+            reply_markup=kb_code_pad(""),
         )
 
+    except FloodWaitError as e:
+        update.message.reply_text(
+            f"⏳ Слишком много запросов. Подождите {e.seconds} сек. и попробуйте /start"
+        )
     except Exception as e:
-        logger.error("Ошибка загрузки модуля: %s", e)
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        update.message.reply_text(f"❌ Ошибка при загрузке: {e}")
+        logger.error("Ошибка send_code: %s", e)
+        update.message.reply_text(f"❌ Ошибка при отправке кода: {e}\n\nПопробуйте /start")
 
 
 # ─────────────────────────────────────────────
-# ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК
+# СОХРАНЕНИЕ ПОЛЬЗОВАТЕЛЯ
 # ─────────────────────────────────────────────
-def error_handler(update: object, context: CallbackContext):
-    logger.error("Необработанное исключение:", exc_info=context.error)
-    if isinstance(update, Update):
-        try:
-            msg = "⚠️ Внутренняя ошибка. Попробуйте /start"
-            if update.callback_query:
-                update.callback_query.answer(msg, show_alert=True)
-            elif update.message:
-                update.message.reply_text(msg)
-        except Exception:
-            pass
+def _save_user(tg_id: int, context: CallbackContext):
+    users = load_json(USERS_FILE)
+    now   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    tg_id_str = str(tg_id)
+
+    users[tg_id_str] = {
+        "nick":          context.user_data.get("nick", f"user_{tg_id}"),
+        "phone":         context.user_data.get("phone", ""),
+        "api_id":        context.user_data.get("api_id"),
+        "registered_at": now,
+        "is_admin":      tg_id_str in ADMIN_IDS,
+        "modules":       [],
+    }
+    save_json(USERS_FILE, users)
+    context.user_data.clear()
+    logger.info("Пользователь сохранён: tg_id=%s", tg_id)
+
+
+# ─────────────────────────────────────────────
+# ПРОФИЛЬ
+# ─────────────────────────────────────────────
+def _show_profile(update: Update, context: CallbackContext):
+    query = update.callback_query
+    tg_id = str(query.from_user.id)
+    users = load_json(USERS_FILE)
+    user  = users.get(tg_id, {})
+
+    session_path = os.path.join(SESSIONS_DIR, f"{tg_id}.session")
+    connected = "✅ Активна" if os.path.exists(session_path) else "❌ Нет сессии"
+
+    query.edit_message_text(
+        f"👤 *Профиль*\n\n"
+        f"🆔 ID: `{tg_id}`\n"
+        f"📱 Телефон: `{user.get('phone', '—')}`\n"
+        f"📅 Регистрация: {user.get('registered_at', '—')}\n"
+        f"🔗 Сессия: {connected}\n"
+        f"🔧 Админ: {'✅' if user.get('is_admin') else '❌'}",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Назад", callback_data="noop")]
+        ]),
+    )
 
 
 # ─────────────────────────────────────────────
@@ -513,17 +580,12 @@ def main():
     dp      = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", cmd_start))
-
     dp.add_handler(CallbackQueryHandler(button_handler))
-
-    # ВАЖНО: два отдельных хендлера — текст и документы
-    # Filters.text & ~Filters.command — исключаем команды из text handler
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
-    dp.add_handler(MessageHandler(Filters.document, handle_document))
 
-    dp.add_error_handler(error_handler)
+    dp.add_error_handler(lambda u, c: logger.error("Ошибка:", exc_info=c.error))
 
-    logger.info("🚀 Бот запущен!")
+    logger.info("Бот запущен!")
     updater.start_polling(drop_pending_updates=True)
     updater.idle()
 

@@ -232,7 +232,7 @@ def handle_text(update: Update, context: CallbackContext):
                 return
             user_states[tg_id]["data"]["phone"] = text
             user_states[tg_id]["state"] = "REG_PASS"
-            update.message.reply_text("Придумай пароль для входа в dynamic панель бота:")
+            update.message.reply_text("Придумай пароль для входа в панель бота:")
             
         elif state == "REG_PASS":
             user_states[tg_id]["data"]["password"] = text
@@ -259,7 +259,10 @@ def handle_text(update: Update, context: CallbackContext):
             update.message.reply_text("⏳ Подключаюсь к серверам Telegram для отправки СМС-кода...")
             
             try:
-                loop = asyncio.get_event_loop()
+                # ПРИНУДИТЕЛЬНО СОЗДАЕМ НОВЫЙ LOOP ДЛЯ ЭТОГО ПОТОКА
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
                 client = TelegramClient(sess_path, int(user_states[tg_id]["data"]["api_id"]), user_states[tg_id]["data"]["api_hash"])
                 loop.run_until_complete(client.connect())
                 
@@ -279,13 +282,14 @@ def handle_text(update: Update, context: CallbackContext):
 
         elif state == "INPUT_TG_2FA":
             client = user_states[tg_id]["client"]
-            loop = asyncio.get_event_loop()
+            
+            # ПРИНУДИТЕЛЬНО СОЗДАЕМ НОВЫЙ LOOP ДЛЯ ЭТОГО ПОТОКА
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             try:
-                # Проверяем и восстанавливаем подключение клиента перед вводом 2FA
                 if not client.is_connected():
                     loop.run_until_complete(client.connect())
                 
-                # Отправляем облачный пароль
                 loop.run_until_complete(client.sign_in(password=text))
                 
                 update.message.reply_text("✅ Двухфакторный пароль принят! Юзербот успешно запущен.")
@@ -295,10 +299,8 @@ def handle_text(update: Update, context: CallbackContext):
                 update.message.reply_text("❌ Неверный облачный пароль! Попробуйте еще раз:")
             except Exception as e:
                 update.message.reply_text("❌ Ошибка 2FA: " + str(e))
-                try:
-                    loop.run_until_complete(client.disconnect())
-                except:
-                    pass
+                try: loop.run_until_complete(client.disconnect())
+                except: pass
                 if tg_id in user_states: del user_states[tg_id]
 
         elif state == "LOGIN_PHONE":
@@ -328,7 +330,11 @@ def handle_text(update: Update, context: CallbackContext):
 # ===== ПРОВЕРКА КОДА ИЗ КНОПОК =====
 def process_tg_code(message, context, tg_id, code):
     client = user_states[tg_id]["client"]
-    loop = asyncio.get_event_loop()
+    
+    # ПРИНУДИТЕЛЬНО СОЗДАЕМ НОВЫЙ LOOP ДЛЯ ЭТОГО ПОТОКА
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     phone_code_hash = user_states[tg_id]["phone_code_hash"]
     u_phone = user_states[tg_id]["data"]["phone"]
     
@@ -350,10 +356,8 @@ def process_tg_code(message, context, tg_id, code):
         message.reply_text("❌ Неверный код! Заново:\n\n" + text_kb, reply_markup=markup_kb, parse_mode="HTML")
     except Exception as e:
         message.reply_text("❌ Ошибка: " + str(e))
-        try:
-            loop.run_until_complete(client.disconnect())
-        except:
-            pass
+        try: loop.run_until_complete(client.disconnect())
+        except: pass
         if tg_id in user_states: del user_states[tg_id]
 
 # ===== СОХРАНЕНИЕ ДАННЫХ =====

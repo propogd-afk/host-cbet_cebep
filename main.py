@@ -60,6 +60,14 @@ def get_user_modules_dir(tg_id):
     os.makedirs(u_dir, exist_ok=True)
     return u_dir
 
+# Проверка уникальности ника
+def is_nick_taken(nick):
+    users = load_file(USERS_FILE)
+    for phone, data in users.items():
+        if data.get("nick", "").lower() == nick.lower():
+            return True
+    return False
+
 # ===== ИНЛАЙН КЛАВИАТУРА ДЛЯ ВВОДА СМС-КОДА =====
 def get_number_keyboard(current_code=""):
     keyboard = [
@@ -218,6 +226,11 @@ def handle_text(update: Update, context: CallbackContext):
     try:
         if state == "REG_NICK":
             if 3 <= len(text) <= 32:
+                # ПРОВЕРКА: занят ли никнейм
+                if is_nick_taken(text):
+                    update.message.reply_text("❌ Данный никнейм уже занят! Придумайте другой:")
+                    return
+                
                 user_states[tg_id]["data"]["nick"] = text
                 user_states[tg_id]["state"] = "REG_PHONE"
                 update.message.reply_text("Введи номер телефона аккаунта Telegram (+79123456789):")
@@ -228,9 +241,16 @@ def handle_text(update: Update, context: CallbackContext):
             if not text.startswith("+") or not text[1:].isdigit():
                 update.message.reply_text("❌ Номер должен быть в международном формате, например: +79123456789")
                 return
+                
+            # ПРОВЕРКА: зарегистрирован ли номер телефона
+            users = load_file(USERS_FILE)
+            if text in users:
+                update.message.reply_text("❌ Данный номер телефона уже зарегистрирован в системе! Введите другой номер:")
+                return
+                
             user_states[tg_id]["data"]["phone"] = text
             user_states[tg_id]["state"] = "REG_PASS"
-            update.message.reply_text("Придумай пароль для входа в panel бота:")
+            update.message.reply_text("Придумай пароль для входа в панель бота:")
             
         elif state == "REG_PASS":
             user_states[tg_id]["data"]["password"] = text
@@ -374,7 +394,6 @@ def finalize_registration_by_msg(message, context, tg_id, skip_ub=False):
     del user_states[tg_id]
     message.reply_text("🎉 Профиль сохранен в базе данных хостинга!")
     
-    # Исправленный безопасный вызов меню
     sub = get_sub(tg_id)
     u_dir = get_user_modules_dir(tg_id)
     session_exists = os.path.exists(os.path.join(u_dir, str(phone) + ".session"))
@@ -414,7 +433,6 @@ def finalize_registration(update: Update, context: CallbackContext, skip_ub=Fals
     del user_states[tg_id]
     update.message.reply_text("🎉 Профиль сохранен в базе данных хостинга!")
     
-    # Исправленный безопасный вызов меню
     sub = get_sub(tg_id)
     u_dir = get_user_modules_dir(tg_id)
     session_exists = os.path.exists(os.path.join(u_dir, str(phone) + ".session"))
@@ -443,7 +461,7 @@ def main():
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
     
-    print("🚀 Всё готово! Бот полностью стабилизирован.")
+    print("🚀 Бот с валидацией уникальности запущен!")
     updater.start_polling()
     updater.idle()
 

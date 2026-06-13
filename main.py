@@ -22,12 +22,9 @@ from telegram.ext import (
 # ─────────────────────────────────────────────
 # КОНФИГУРАЦИЯ
 # ─────────────────────────────────────────────
-BOT_TOKEN      = os.environ.get("BOT_TOKEN", "")
-ADMIN_IDS_RAW  = os.environ.get("ADMIN_IDS", "")          # "123456,789012"
+BOT_TOKEN      = os.environ.get("BOT_TOKEN", "8989430238:AAFX33wQAtm4T_sV0OBwrTrCj4kbax-jwOU")
+ADMIN_IDS_RAW  = os.environ.get("ADMIN_IDS", "1837883882")
 ADMIN_IDS      = set(ADMIN_IDS_RAW.split(",")) if ADMIN_IDS_RAW else set()
-
-if not BOT_TOKEN:
-    raise RuntimeError("Переменная окружения BOT_TOKEN не задана!")
 
 BASE_DIR        = "/app"
 DATA_DIR        = os.path.join(BASE_DIR, "data")

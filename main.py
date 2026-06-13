@@ -332,13 +332,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await send_menu_photo(
             update, PHOTO_AUTH,
-            "👾 *UserBot | Ru*\n\n"
+            "👾 *UserBot Ru*\n\n"
             "Добро пожаловать в систему управления юзерботами!\n\n"
             "Здесь ты можешь подключить свой Telegram-аккаунт и установить модули — "
             "автоответчики, инструменты автоматизации, фильтры и многое другое.\n\n"
             "⚡️ Движок: *Telethon*\n"
             "🧩 Система модулей: *как в Hikka*\n"
-            "👤 Автор: @cbet_cebep\n\n"
+            "👤 Автор: `@cbet_cebep`\n\n"
             "👇 Нажми кнопку чтобы начать:",
             get_guest_kb()
         )
@@ -364,7 +364,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_auth:
             nick = users[tg_id].get("nick", "Пользователь")
             await query.message.reply_text(
-                f"🏠 *Главное меню*, *{nick}*",
+                f"🏠 Главное меню — {nick}",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=get_user_kb()
             )
@@ -383,7 +383,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return "MENU"
         await send_menu_photo(
             query, PHOTO_AUTH,
-            "🔐 *Авторизация — Шаг 1 из 4*\n\n"
+            "🔐 *Авторизация - Шаг 1 из 4*\n\n"
             "Придумай себе *никнейм* — он будет отображаться в профиле "
             "и в панели администратора.\n\n"
             "💡 Можно использовать латиницу, кириллицу или цифры.\n"
@@ -490,13 +490,13 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "u_sonya":
         await send_menu_photo(
             query, PHOTO_SONYA_SAD,
-            "🤖 *Соня — ИИ-ассистент*\n\n"
+            "🤖 *Соня - ИИ-ассистент*\n\n"
             "Соня — твой персональный ИИ-помощник внутри юзербота.\n\n"
             "Она умеет отвечать на вопросы, помогать с настройкой модулей "
             "и просто поддержать разговор в любое время суток.\n\n"
             "😴 *Сейчас Соня отдыхает...*\n"
             "Функция ИИ-чата скоро будет доступна. Следи за обновлениями!\n\n"
-            "📢 Канал: @cbet_cebep",
+            "📢 Канал: `@cbet_cebep`",
             get_cancel_kb()
         )
         return "SONYA_CHAT"
@@ -509,7 +509,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mods_list = m_data.get("modules", [])
         mods_text = "\n".join(f"  • `{m['name']}.py` — установлен {m.get('date','?')}" for m in mods_list) if mods_list else "  _модули не установлены_"
         txt = (
-            f"🧩 *Модули — UserBot | Ru*\n\n"
+            f"🧩 *Модули - UserBot | Ru*\n\n"
             f"Здесь ты управляешь плагинами своего юзербота.\n"
             f"Модули загружаются прямо в твою Telethon-сессию.\n\n"
             f"📊 Слотов занято: `{used}/5`\n\n"
@@ -708,7 +708,7 @@ async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "1. Зайди на my.telegram.org\n"
         "2. Войди в свой аккаунт\n"
         "3. Открой раздел *API development tools*\n"
-        "4. Скопируй поле *App api_id*\n\n"
+        "4. Скопируй поле `api_id`\n\n"
         "📌 Выглядит как число: `12345678`",
         get_cancel_kb()
     )
@@ -732,7 +732,7 @@ async def login_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Введи свой *API Hash* — секретный ключ приложения Telegram.\n\n"
         "Где найти:\n"
         "➡️ Тот же раздел на my.telegram.org\n"
-        "Поле *App api_hash*\n\n"
+        "Поле `api_hash`\n\n"
         "📌 Выглядит так: `a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6`\n\n"
         "🔒 Ключ хранится только на сервере и нужен исключительно для создания сессии.",
         get_cancel_kb()
@@ -1253,6 +1253,54 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 🔧 СЛУЖЕБНЫЕ КОМАНДЫ
+# ═══════════════════════════════════════════════════════════════════
+
+async def cmd_reset_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /reset_me — сбрасывает твою запись из users.json и удаляет сессию.
+    Нужно если застрял между состояниями или не можешь войти.
+    """
+    tg_id = str(update.effective_user.id)
+
+    async with _file_lock:
+        users = load_json(USERS_FILE)
+        if tg_id in users:
+            del users[tg_id]
+            save_json(USERS_FILE, users)
+
+    # Удаляем файлы сессии
+    for ext in (".session", ".session-journal"):
+        p = os.path.join(DATA_DIR, f"session_{tg_id}{ext}")
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
+    # Отключаем юзербота если запущен
+    if tg_id in USER_BOTS:
+        try:
+            await USER_BOTS[tg_id].disconnect()
+            del USER_BOTS[tg_id]
+        except Exception:
+            pass
+    if tg_id in LOADED_MODULES:
+        del LOADED_MODULES[tg_id]
+
+    context.user_data.clear()
+    logger.info(f"Сброс аккаунта для {tg_id}")
+
+    await update.message.reply_text(
+        "🗑 *Аккаунт сброшен.*\n\n"
+        "Все данные удалены. Теперь можешь зарегистрироваться заново.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_guest_kb()
+    )
+    return "MENU"
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 🚀 ТОЧКА ВХОДА
 # ═══════════════════════════════════════════════════════════════════
 
@@ -1269,6 +1317,7 @@ def main():
         entry_points=[
             CommandHandler("start", cmd_start),
             CommandHandler("setimages", cmd_set_images),
+            CommandHandler("reset_me", cmd_reset_me),
         ],
         states={
             "MENU": [
@@ -1334,6 +1383,7 @@ def main():
         },
         fallbacks=[
             CommandHandler("start", cmd_start),
+            CommandHandler("reset_me", cmd_reset_me),
             CallbackQueryHandler(menu_router)
         ],
         per_message=False,

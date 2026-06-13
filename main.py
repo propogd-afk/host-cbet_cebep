@@ -3,8 +3,13 @@ import json
 import logging
 import random
 import asyncio
+import importlib.util
+import sys
 from datetime import datetime, timezone
 import aiohttp
+
+# Импортируем Pyrogram для работы юзерботов
+from pyrogram import Client
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -41,6 +46,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 _file_lock = asyncio.Lock()
 
+# Глобальный словарь для хранения активных клиентов юзерботов {tg_id: pyrogram_client}
+USER_BOTS = {}
+
 # ─────────────────────────────────────────────
 # РАБОТА С JSON БАЗОЙ ДАННЫХ
 # ─────────────────────────────────────────────
@@ -71,11 +79,24 @@ def init_system():
         save_json(PROMO_FILE, {"URETRACOIN": {"tier": 3, "days": 90, "max_uses": 100, "used_by": []}})
 
 # ─────────────────────────────────────────────
+# ПРОВЕРКА АВТОРIЗАЦИИ (ЖЕЛЕЗОБЕТОННАЯ)
+# ─────────────────────────────────────────────
+def is_user_authorized(tg_id: str) -> bool:
+    """Проверяет, авторизован ли юзер (есть ли запись в БД и физический файл сессии)"""
+    users = load_json(USERS_FILE)
+    session_file = os.path.join(DATA_DIR, f"session_{tg_id}.session")
+    
+    if tg_id in users and users[tg_id].get("authenticated", False):
+        if os.path.exists(session_file):
+            return True
+    return False
+
+# ─────────────────────────────────────────────
 # МЕНЮ И КЛАВИАТУРЫ
 # ─────────────────────────────────────────────
 def get_guest_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 Регистрация", callback_data="g_reg"), InlineKeyboardButton("🔑 Вход", callback_data="g_login")],
+        [InlineKeyboardButton("🚀 Создать Юзербота (Вход)", callback_data="g_reg")],
         [InlineKeyboardButton("👑 Админ-Панель", callback_data="g_admin")]
     ])
 
@@ -83,7 +104,7 @@ def get_user_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 Профиль", callback_data="u_profile"), InlineKeyboardButton("💎 Подписка", callback_data="u_sub")],
         [InlineKeyboardButton("⚙️ Модули", callback_data="u_modules"), InlineKeyboardButton("🤖 Соня (ИИ)", callback_data="u_sonya")],
-        [InlineKeyboardButton("❌ Выйти", callback_data="u_logout")]
+        [InlineKeyboardButton("❌ Очистить сессию (Выход)", callback_data="u_logout")]
     ])
 
 def get_cancel_kb():
@@ -101,18 +122,61 @@ async def send_menu_photo(update_or_query, photo_path, caption_text, reply_marku
     await msg.reply_text(caption_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 # ─────────────────────────────────────────────
-# ОСНОВНОЙ РОУТЕР И ЛОГИКА МЕНЮ
+# УПРАВЛЕНИЕ СЕССИЯМИ PYROGRAM
+# ─────────────────────────────────────────────
+def load_user_modules(client: Client, tg_id: str):
+    user_dir = os.path.join(MODULES_DIR, f"user_{tg_id}")
+    if not os.path.exists(user_dir): return
+        
+    for file in os.listdir(user_dir):
+        if file.endswith(".py"):
+            mod_name = file[:-3]
+            module_path = os.path.join(user_dir, file)
+            try:
+                spec = importlib.util.spec_from_file_location(mod_name, module_path)
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[mod_name] = module
+                spec.loader.exec_module(module)
+                
+                if hasattr(module, "init_module"):
+                    module.init_module(client)
+            except Exception as e:
+                logger.error(f"Ошибка загрузки модуля {file} для юзера {tg_id}: {e}")
+
+async def start_user_bot(tg_id: str, api_id: int, api_hash: str):
+    """Фоновый запуск клиента Pyrogram для юзера"""
+    if tg_id in USER_BOTS:
+        try: await USER_BOTS[tg_id].stop()
+        except: pass
+
+    session_path = os.path.join(DATA_DIR, f"session_{tg_id}")
+    client = Client(session_path, api_id=api_id, api_hash=api_hash, workdir=DATA_DIR)
+    
+    load_user_modules(client, tg_id)
+    await client.start()
+    USER_BOTS[tg_id] = client
+    logger.info(f"Юзербот для ID {tg_id} успешно поднят.")
+
+# ─────────────────────────────────────────────
+# ОСНОВНОЙ РОУТЕР МЕНЮ
 # ─────────────────────────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     context.user_data.clear()
-    async with _file_lock: 
+    
+    async with _file_lock:
+        is_auth = is_user_authorized(tg_id)
         users = load_json(USERS_FILE)
-        
-    if tg_id in users and users[tg_id].get("authenticated", False):
-        await update.message.reply_text(f"🏠 Главное меню. Добро пожаловать, *{users[tg_id]['nick']}*!", parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_kb())
+
+    if is_auth:
+        # Если сессия есть, но почему-то упал процесс клиента (например после перезагрузки сервера) — поднимаем
+        if tg_id not in USER_BOTS:
+            u_info = users[tg_id]
+            asyncio.create_task(start_user_bot(tg_id, u_info["api_id"], u_info["api_hash"]))
+            
+        await update.message.reply_text(f"🏠 *Главное меню.*\n\nДобро пожаловать назад, *{users[tg_id].get('nick', 'Пользователь')}*!\nВаш юзербот активен.", parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_kb())
     else:
-        await update.message.reply_text("👋 *UserBot Manager*\n\nДля работы вам необходимо зарегистрироваться или войти.", parse_mode=ParseMode.MARKDOWN, reply_markup=get_guest_kb())
+        await update.message.reply_text("👋 *UserBot Manager*\n\nУ вас нет активных сессий на нашем хостинге. Нажмите кнопку ниже, чтобы привязать аккаунт.", parse_mode=ParseMode.MARKDOWN, reply_markup=get_guest_kb())
     return "MENU"
 
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -121,8 +185,9 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     await query.answer()
     
-    async with _file_lock: users = load_json(USERS_FILE)
-    is_auth = tg_id in users and users[tg_id].get("authenticated", False)
+    async with _file_lock:
+        is_auth = is_user_authorized(tg_id)
+        users = load_json(USERS_FILE)
 
     if data == "back_main":
         context.user_data.clear()
@@ -132,30 +197,46 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("🏠 Меню гостя:", reply_markup=get_guest_kb())
         return "MENU"
 
+    # ВЕТКА ДЛЯ ГОСТЕЙ (НОВАЯ РЕГИСТРАЦИЯ)
     if data == "g_reg":
-        await query.message.reply_text("📝 *Регистрация.*\n\nВведите ваш никнейм:", parse_mode=ParseMode.MARKDOWN, reply_markup=get_cancel_kb())
+        if is_auth:
+            await query.message.reply_text("⚠️ У вас уже есть активная сессия юзербота!", reply_markup=get_user_kb())
+            return "MENU"
+        await query.message.reply_text("📝 *Шаг 1.* Придумайте ваш локальный никнейм:", parse_mode=ParseMode.MARKDOWN, reply_markup=get_cancel_kb())
         return "REG_NICK"
-        
-    elif data == "g_login":
-        await send_menu_photo(query, PHOTO_AUTH, "🔑 *Вход.*\n\nВведите ваш номер телефона:", get_cancel_kb())
-        return "LOGIN_PHONE"
         
     elif data == "g_admin":
         await query.message.reply_text("👑 Введите пароль администратора:", reply_markup=get_cancel_kb())
         return "ADMIN_LOGIN"
+
+    # ВЕТКА ДЛЯ АВТОРИЗОВАННЫХ ПОЛЬЗОВАТЕЛЕЙ
+    if not is_auth:
+        await query.message.reply_text("⚠️ Сессия не найдена. Пожалуйста, пройдите регистрацию.", reply_markup=get_guest_kb())
+        return "MENU"
+
+    if data == "u_logout":
+        # Полная очистка: останавливаем клиент и удаляем файл сессии
+        if tg_id in USER_BOTS:
+            try: await USER_BOTS[tg_id].stop(); del USER_BOTS[tg_id]
+            except: pass
         
-    elif data == "u_logout":
         async with _file_lock:
-            users = load_json(USERS_FILE)
-            if tg_id in users: 
+            if tg_id in users:
                 users[tg_id]["authenticated"] = False
                 save_json(USERS_FILE, users)
-        await query.message.reply_text("❌ Вы успешно вышли из аккаунта.", reply_markup=get_guest_kb())
+                
+        session_file = os.path.join(DATA_DIR, f"session_{tg_id}.session")
+        if os.path.exists(session_file):
+            try: os.remove(session_file)
+            except: pass
+            
+        await query.message.reply_text("❌ Сессия удалена с хостинга. Юзербот выключен.", reply_markup=get_guest_kb())
         return "MENU"
         
     elif data == "u_profile":
         u = users[tg_id]
-        txt = f"👤 *Ваш профиль*\n\n🆔 ID: `{tg_id}`\n🏷 Никнейм: `{u['nick']}`\n📱 Телефон: `{u['phone']}`"
+        status = "🟢 Запущен" if tg_id in USER_BOTS else "🔴 Спит / Инициализация"
+        txt = f"👤 *Ваш профиль*\n\n🆔 ID: `{tg_id}`\n🏷 Ник: `{u.get('nick')}`\n📱 Телефон: `{u.get('phone')}`\n⚡️ Статус на сервере: *{status}*"
         await query.message.reply_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=get_cancel_kb())
         return "MENU"
         
@@ -191,69 +272,88 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return "MENU"
 
 # ─────────────────────────────────────────────
-# РЕГИСТРАЦИЯ И АВТОРИЗАЦИЯ
+# ПОШАГОВАЯ ЦЕПОЧКА РЕГИСТРАЦИИ (ТОЛЬКО ДЛЯ НОВЫХ)
 # ─────────────────────────────────────────────
 async def reg_nick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nick = update.message.text.strip()
     if len(nick) < 3:
         await update.message.reply_text("⚠️ Ник слишком короткий. Придумайте другой:")
         return "REG_NICK"
-        
-    async with _file_lock: users = load_json(USERS_FILE)
-    for u_data in users.values():
-        if u_data.get("nick", "").lower() == nick.lower():
-            await update.message.reply_text("❌ Этот никнейм уже занят! Придумайте другой:", reply_markup=get_cancel_kb())
-            return "REG_NICK"
-
     context.user_data["reg_nick"] = nick
-    await update.message.reply_text("📱 Введите телефон в формате +79123456789:", reply_markup=get_cancel_kb())
-    return "REG_PHONE"
-
-async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["reg_phone"] = update.message.text.strip()
-    await update.message.reply_text("🔒 Создайте надежный пароль:", reply_markup=get_cancel_kb())
-    return "REG_PASS"
-
-async def reg_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    password = update.message.text.strip()
-    tg_id = str(update.effective_user.id)
-    async with _file_lock:
-        users = load_json(USERS_FILE)
-        users[tg_id] = {
-            "nick": context.user_data["reg_nick"], "phone": context.user_data["reg_phone"],
-            "password": password, "registered_at": datetime.now(timezone.utc).isoformat(), "authenticated": False
-        }
-        save_json(USERS_FILE, users)
-    await update.message.reply_text("🎉 Регистрация успешна! Теперь выберите 'Вход' в главном меню.", reply_markup=get_guest_kb())
-    return "MENU"
+    await send_menu_photo(update, PHOTO_AUTH, "📱 *Шаг 2.*\n\nВведите номер телефона вашего Telegram аккаунта (в формате +79XXXXXXXXX):", get_cancel_kb())
+    return "LOGIN_PHONE"
 
 async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["login_phone"] = update.message.text.strip()
-    await update.message.reply_text("🔒 Введите ваш пароль:", reply_markup=get_cancel_kb())
-    return "LOGIN_PASS"
+    context.user_data["phone"] = update.message.text.strip()
+    await update.message.reply_text("🔑 *Шаг 3.*\n\nВведите ваш **API ID** (полученный на my.telegram.org):", parse_mode=ParseMode.MARKDOWN, reply_markup=get_cancel_kb())
+    return "LOGIN_API_ID"
 
-async def login_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    password = update.message.text.strip()
-    phone = context.user_data["login_phone"]
+async def login_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text.strip().isdigit():
+        await update.message.reply_text("⚠️ API ID должен состоять только из цифр. Повторите ввод:")
+        return "LOGIN_API_ID"
+    context.user_data["api_id"] = int(update.message.text.strip())
+    await update.message.reply_text("🔑 *Шаг 4.*\n\nВведите ваш **API HASH**:", parse_mode=ParseMode.MARKDOWN, reply_markup=get_cancel_kb())
+    return "LOGIN_API_HASH"
+
+async def login_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
+    api_hash = update.message.text.strip()
+    context.user_data["api_hash"] = api_hash
     
-    async with _file_lock:
-        users = load_json(USERS_FILE)
-        success = False
-        for u_id, u_data in users.items():
-            if u_data.get("phone") == phone and u_data.get("password") == password:
-                users[u_id]["authenticated"] = True
-                success = True
-                break
-        if success:
+    phone = context.user_data["phone"]
+    api_id = context.user_data["api_id"]
+
+    await update.message.reply_text("⏳ Подключаемся к серверам Telegram и отправляем запрос кода...")
+
+    session_path = os.path.join(DATA_DIR, f"session_{tg_id}")
+    client = Client(session_path, api_id=api_id, api_hash=api_hash, workdir=DATA_DIR)
+    
+    try:
+        await client.connect()
+        code_hash = await client.send_code(phone)
+        context.user_data["client"] = client
+        context.user_data["code_hash"] = code_hash
+        
+        await update.message.reply_text("📩 Telegram прислал код подтверждения в ваши официальные уведомления.\n\n**Введите полученный код сюда:**", reply_markup=get_cancel_kb())
+        return "WAIT_CODE"
+    except Exception as e:
+        logger.error(f"Ошибка отправки кода: {e}")
+        await update.message.reply_text(f"❌ Не удалось отправить код.\nОшибка: `{e}`\nПопробуйте заново через /start", parse_mode=ParseMode.MARKDOWN, reply_markup=get_guest_kb())
+        return "MENU"
+
+async def wait_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+    code = update.message.text.strip()
+    client = context.user_data.get("client")
+    code_hash = context.user_data.get("code_hash")
+    phone = context.user_data.get("phone")
+
+    try:
+        await client.sign_in(phone, code_hash.phone_code_hash, code)
+        
+        async with _file_lock:
+            users = load_json(USERS_FILE)
+            users[tg_id] = {
+                "nick": context.user_data.get("reg_nick", f"User_{tg_id[:4]}"),
+                "phone": phone,
+                "api_id": context.user_data["api_id"],
+                "api_hash": context.user_data["api_hash"],
+                "authenticated": True
+            }
             save_json(USERS_FILE, users)
-            await update.message.reply_text("✅ Вход успешно выполнен!", reply_markup=get_user_kb())
-        else:
-            await update.message.reply_text("❌ Неверный телефон или пароль.", reply_markup=get_guest_kb())
-    return "MENU"
+
+        USER_BOTS[tg_id] = client
+        load_user_modules(client, tg_id)
+
+        await update.message.reply_text("🎉 Авторизация успешна! Сессия создана. Ваш юзербот теперь круглосуточно работает на хостинге.", reply_markup=get_user_kb())
+        return "MENU"
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка проверки кода: `{e}`.\nНачните заново через команду /start", parse_mode=ParseMode.MARKDOWN, reply_markup=get_guest_kb())
+        return "MENU"
 
 # ─────────────────────────────────────────────
-# ПРИЕМ И СОХРАНЕНИЕ МОДУЛЕЙ
+# ОБРАБОТКА И УСТАНОВКА ПЛАГИНОВ
 # ─────────────────────────────────────────────
 async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
@@ -263,35 +363,22 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
     if update.message.document:
         doc = update.message.document
         if not doc.file_name.endswith('.py'):
-            await update.message.reply_text("❌ Бот принимает только файлы с расширением `.py`")
+            await update.message.reply_text("❌ Поддерживаются только `.py` скрипты.")
             return "MENU"
         mod_name = doc.file_name.replace('.py', '')
         tg_file = await context.bot.get_file(doc.file_id)
-        
         data_bytes = await tg_file.download_as_bytearray()
         code_text = data_bytes.decode('utf-8', errors='ignore')
 
-    elif update.message.text:
-        url = update.message.text.strip()
-        if not url.startswith("http"):
-            await update.message.reply_text("❌ Неверный формат ссылки. Отправьте файл или URL.")
-            return "MENU"
-        await update.message.reply_text("⏳ Загрузка скрипта плагина с удаленного хоста...")
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=10) as resp:
-                    if resp.status == 200: 
-                        code_text = await resp.text()
-        except: 
-            pass
-
     if not code_text:
-        await update.message.reply_text("❌ Скрипт пуст или недоступен.", reply_markup=get_user_kb())
+        await update.message.reply_text("❌ Ошибка: скрипт пуст.", reply_markup=get_user_kb())
         return "MENU"
 
     user_dir = os.path.join(MODULES_DIR, f"user_{tg_id}")
     os.makedirs(user_dir, exist_ok=True)
-    with open(os.path.join(user_dir, f"{mod_name}.py"), "w", encoding="utf-8") as f:
+    module_path = os.path.join(user_dir, f"{mod_name}.py")
+    
+    with open(module_path, "w", encoding="utf-8") as f:
         f.write(code_text)
 
     m_file = os.path.join(DATA_DIR, f"user_modules_{tg_id}.json")
@@ -301,11 +388,19 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
         m_data["modules"].append({"name": mod_name, "date": datetime.now().strftime("%d.%m.%Y")})
         save_json(m_file, m_data)
 
-    await update.message.reply_text(f"✅ Модуль *{mod_name}.py* успешно скомпилирован виртуальным окружением среды и запущен на вашем юзерботе!", parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_kb())
+    # Перезапускаем сессию, чтобы применить новый модуль «на лету»
+    if tg_id in USER_BOTS:
+        async with _file_lock: users = load_json(USERS_FILE)
+        u_info = users.get(tg_id, {})
+        await start_user_bot(tg_id, u_info["api_id"], u_info["api_hash"])
+        await update.message.reply_text(f"✅ Модуль *{mod_name}.py* успешно загружен и интегрирован в активную сессию вашего юзербота!", parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_kb())
+    else:
+        await update.message.reply_text(f"✅ Модуль *{mod_name}.py* сохранен на сервере.", parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_kb())
+        
     return "MENU"
 
 # ─────────────────────────────────────────────
-# АДМИН-ПАНЕЛЬ
+# АДМИН-ПАНЕЛЬ И СЛУЖЕБНЫЕ ХЕНДЛЕРЫ
 # ─────────────────────────────────────────────
 async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() != ADMIN_PASSWORD:
@@ -324,24 +419,21 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if data == "a_users":
-        async with _file_lock:
-            users = load_json(USERS_FILE)
-            subs = load_json(SUBS_FILE)
+        async with _file_lock: users = load_json(USERS_FILE)
         txt = "👥 *Список зарегистрированных пользователей:*\n\n"
         if not users:
             txt += "База данных пользователей пуста."
         else:
             for u_id, v in users.items():
-                tier = subs.get(u_id, {}).get("tier", 1)
-                txt += f"• *{v.get('nick','-')}* | Тел: `{v.get('phone','-')}` | ID: `{u_id}` | Тариф: Тир-{tier}\n"
+                status = "🟢 ON" if u_id in USER_BOTS else "🔴 OFF"
+                txt += f"• *{v.get('nick','-')}* | Тел: `{v.get('phone','-')}` | [{status}]\n"
         await query.message.reply_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_admin")]]))
         return "ADMIN_MENU"
 
     elif data == "a_promos":
         async with _file_lock: promos = load_json(PROMO_FILE)
         txt = "🎫 *Активные промокоды в системе:*\n\n"
-        for k, v in promos.items(): 
-            txt += f"• `{k}` (Тир-{v['tier']}, Осталось активаций: {v['max_uses'] - len(v.get('used_by', []))})\n"
+        for k, v in promos.items(): txt += f"• `{k}` (Тир-{v['tier']})\n"
         await query.message.reply_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_admin")]]))
         return "ADMIN_MENU"
 
@@ -350,7 +442,7 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("👥 Пользователи", callback_data="a_users"), InlineKeyboardButton("🎫 Промокоды", callback_data="a_promos")],
             [InlineKeyboardButton("🚪 Выйти из админки", callback_data="back_main")]
         ])
-        await query.message.reply_text("👑 *Панель администратора:*", parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
+        await update.message.reply_text("👑 *Панель администратора:*", parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
         return "ADMIN_MENU"
 
     return "MENU"
@@ -364,10 +456,27 @@ async def promo_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return "MENU"
 
 # ─────────────────────────────────────────────
-# ЗАПУСК
+# АВТОЗАПУСК СЕССИЙ ПРИ СТАРТЕ СЕРВЕРА
 # ─────────────────────────────────────────────
+async def auto_run_existing_bots():
+    users = load_json(USERS_FILE)
+    for tg_id, info in users.items():
+        session_file = os.path.join(DATA_DIR, f"session_{tg_id}.session")
+        if info.get("authenticated") and os.path.exists(session_file):
+            try:
+                asyncio.create_task(start_user_bot(tg_id, info["api_id"], info["api_hash"]))
+            except Exception as e:
+                logger.error(f"Не удалось автоматически поднять юзербота {tg_id}: {e}")
+
 def main():
     init_system()
+    
+    try: loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    loop.run_until_complete(auto_run_existing_bots())
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     conv_handler = ConversationHandler(
@@ -375,10 +484,10 @@ def main():
         states={
             "MENU": [CallbackQueryHandler(menu_router)],
             "REG_NICK": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_nick)],
-            "REG_PHONE": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_phone)],
-            "REG_PASS": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_pass)],
             "LOGIN_PHONE": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_phone)],
-            "LOGIN_PASS": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_pass)],
+            "LOGIN_API_ID": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_api_id)],
+            "LOGIN_API_HASH": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_api_hash)],
+            "WAIT_CODE": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_code)],
             "ADMIN_LOGIN": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, admin_login)],
             "ADMIN_MENU": [CallbackQueryHandler(admin_router)],
             "WAIT_PROMO_ACTIVATE": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, promo_activate)],
@@ -390,7 +499,7 @@ def main():
     )
 
     app.add_handler(conv_handler)
-    logger.info("Бот успешно запущен на стабильной строковой архитектуре!")
+    logger.info("Бот-Менеджер и Среда выполнения юзерботов запущена!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":

@@ -99,7 +99,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, use
     sub = get_sub(tg_id)
     phone, _ = get_user_by_tg_id(tg_id)
     
-    # Проверяем, создана ли сессия (живой ли юзербот на сервере)
     u_dir = get_user_modules_dir(tg_id)
     session_exists = os.path.exists(os.path.join(u_dir, f"{phone}.session"))
     status_ub = "🟢 Запущен" if session_exists else "🔴 Не авторизован"
@@ -153,7 +152,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_file(USERS_FILE, users)
         await query.edit_message_text("❌ Вы вышли из панели.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ На главную", callback_data="to_welcome")]]))
     
-    # Запуск триггера авторизации юзербота из меню
     elif data == "start_ub_auth":
         user_states[tg_id] = {"state": "REG_API_ID", "data": {"phone": phone, "nick": user_data["nick"], "password": user_data["password"]}}
         await query.edit_message_text("⚙️ <b>Настройка сессии Telethon</b>\n\nВведите ваш <b>api_id</b> с сайта my.telegram.org (или 'пропустить'):", parse_mode="HTML")
@@ -171,7 +169,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_file(USERS_FILE, users)
         await query.edit_message_text("🛑 Юзербот остановлен, сессия удалена с сервера.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ В меню", callback_data="to_main_menu")]]))
 
-    # --- ЛОГИКА ОБРАБОТКИ НАЖАТИЙ НА ЦИФРЫ (ИНЛАЙН ВВОД КОДА) ---
+    # --- ЛОГИКА ИНЛАЙН КНОПОК ДЛЯ СМС КОДА ---
     elif data.startswith("num_"):
         if tg_id not in user_states or user_states[tg_id].get("state") != "INPUT_TG_CODE":
             return
@@ -189,12 +187,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "submit":
             code = user_states[tg_id]["code_buffer"]
             if len(code) != 5:
-                # Если код не пятизначный, ругаемся, но клавиатуру не убираем
                 text, reply_markup = get_number_keyboard(code)
                 await query.edit_message_text(text + "\n\n⚠️ <i>Код должен состоять из 5 цифр!</i>", reply_markup=reply_markup, parse_mode="HTML")
                 return
                 
-            # Передаем управление в функцию проверки кода, имитируя текстовый апдейт
             await query.edit_message_text("⏳ Проверяю введенный код...")
             await process_tg_code(query.message, context, tg_id, code)
             
@@ -204,110 +200,121 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text, reply_markup = get_number_keyboard(user_states[tg_id]["code_buffer"])
             await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="HTML")
 
-# ===== МАГИЯ АВТОРЗАТИИ TELETHON (СМС, КОД, 2FA) =====
+# ===== ОБРАБОТКА ВВОДА ТЕКСТА (ЗДЕСЬ ВСЕ НАСТРОЕНО) =====
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = update.effective_user.id
     text = update.message.text.strip()
-    phone, user_data = get_user_by_tg_id(tg_id)
     
-    if tg_id not in user_states: return
+    if tg_id not in user_states: 
+        return
+
     state = user_states[tg_id].get("state")
     is_skip = text.lower() in ["/skip", "skip", "пропустить"]
 
-    # --- ЦЕПОЧКА РЕГИСТРАЦИИ ---
-    if state == "REG_NICK":
-        if 3 <= len(text) <= 32:
-            user_states[tg_id]["data"]["nick"] = text
-            user_states[tg_id]["state"] = "REG_PHONE"
-            await update.message.reply_text("Введи номер телефона аккаунта Telegram (+79123456789):")
-    elif state == "REG_PHONE":
-        if not text.startswith("+") or not text[1:].isdigit():
-            await update.message.reply_text("❌ Номер должен быть в международном формате, например: +79123456789")
-            return
-        user_states[tg_id]["data"]["phone"] = text
-        user_states[tg_id]["state"] = "REG_PASS"
-        await update.message.reply_text("Придумай пароль для входа в panel бота:")
-    elif state == "REG_PASS":
-        user_states[tg_id]["data"]["password"] = text
-        user_states[tg_id]["state"] = "REG_API_ID"
-        await update.message.reply_text("⚙️ <b>Регистрация профиля успешна!</b>\n\nТеперь настроим юзербота.\nВведите ваш <b>api_id</b> (или напишите 'пропустить'):", parse_mode="HTML")
-        
-    elif state == "REG_API_ID":
-        if is_skip:
-            await finalize_registration(update, context, skip_ub=True)
-        else:
-            if not text.isdigit():
-                await update.message.reply_text("❌ api_id должен состоять только из цифр:")
+    try:
+        # --- ШАГ 1: ПРИНЯЛИ НИК ---
+        if state == "REG_NICK":
+            if 3 <= len(text) <= 32:
+                user_states[tg_id]["data"]["nick"] = text
+                user_states[tg_id]["state"] = "REG_PHONE"
+                await update.message.reply_text("Введи номер телефона аккаунта Telegram (+79123456789):")
+            else:
+                await update.message.reply_text("❌ Ник должен быть от 3 до 32 символов!")
+                
+        # --- ШАГ 2: ПРИНЯЛИ ТЕЛЕФОН ---
+        elif state == "REG_PHONE":
+            if not text.startswith("+") or not text[1:].isdigit():
+                await update.message.reply_text("❌ Номер должен быть в международном формате, например: +79123456789")
                 return
-            user_states[tg_id]["data"]["api_id"] = text
-            user_states[tg_id]["state"] = "REG_API_HASH"
-            await update.message.reply_text("✅ api_id принят. Теперь введите ваш <b>api_hash</b>:", parse_mode="HTML")
+            user_states[tg_id]["data"]["phone"] = text
+            user_states[tg_id]["state"] = "REG_PASS"
+            await update.message.reply_text("Придумай пароль для входа в панель бота:")
             
-    elif state == "REG_API_HASH":
-        user_states[tg_id]["data"]["api_hash"] = text
-        
-        # Данные собраны, начинаем коннект через Telethon для генерации сессии!
-        u_phone = user_states[tg_id]["data"]["phone"]
-        u_dir = get_user_modules_dir(tg_id)
-        sess_path = os.path.join(u_dir, u_phone)
-        
-        await update.message.reply_text("⏳ Подключаюсь к серверам Telegram для отправки СМС-кода...")
-        
-        try:
-            client = TelegramClient(sess_path, int(user_states[tg_id]["data"]["api_id"]), user_states[tg_id]["data"]["api_hash"])
-            await client.connect()
+        # --- ШАГ 3: ПРИНЯЛИ ПАРОЛЬ ---
+        elif state == "REG_PASS":
+            user_states[tg_id]["data"]["password"] = text
+            user_states[tg_id]["state"] = "REG_API_ID"
+            await update.message.reply_text("⚙️ <b>Регистрация профиля успешна!</b>\n\nТеперь настроим юзербота.\nВведите ваш <b>api_id</b> (или напишите 'пропустить'):", parse_mode="HTML")
             
-            send_code_obj = await client.send_code_request(u_phone)
+        # --- ШАГ 4: ПРИНЯЛИ API_ID ---
+        elif state == "REG_API_ID":
+            if is_skip:
+                await finalize_registration(update, context, skip_ub=True)
+            else:
+                if not text.isdigit():
+                    await update.message.reply_text("❌ api_id должен состоять только из цифр:")
+                    return
+                user_states[tg_id]["data"]["api_id"] = text
+                user_states[tg_id]["state"] = "REG_API_HASH"
+                await update.message.reply_text("✅ api_id принят. Теперь введите ваш <b>api_hash</b>:", parse_mode="HTML")
+                
+        # --- ШАГ 5: ПРИНЯЛИ API_HASH -> ШЛЕМ СМС ---
+        elif state == "REG_API_HASH":
+            user_states[tg_id]["data"]["api_hash"] = text
+            u_phone = user_states[tg_id]["data"]["phone"]
+            u_dir = get_user_modules_dir(tg_id)
+            sess_path = os.path.join(u_dir, u_phone)
             
-            user_states[tg_id]["client"] = client
-            user_states[tg_id]["phone_code_hash"] = send_code_obj.phone_code_hash
-            user_states[tg_id]["state"] = "INPUT_TG_CODE"
-            user_states[tg_id]["code_buffer"] = ""  # Создаем пустой буфер для инлайн-кнопок
+            await update.message.reply_text("⏳ Подключаюсь к серверам Telegram для отправки СМС-кода...")
             
-            # Выводим инлайн клавиатуру вместо текстового запроса!
-            text_kb, markup_kb = get_number_keyboard()
-            await update.message.reply_text(text_kb, reply_markup=markup_kb, parse_mode="HTML")
-            
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка инициализации Telethon: {e}\nРегистрация завершена без юзербота. Вы можете настроить его позже.")
-            await finalize_registration(update, context, skip_ub=True)
+            try:
+                client = TelegramClient(sess_path, int(user_states[tg_id]["data"]["api_id"]), user_states[tg_id]["data"]["api_hash"])
+                await client.connect()
+                
+                send_code_obj = await client.send_code_request(u_phone)
+                
+                user_states[tg_id]["client"] = client
+                user_states[tg_id]["phone_code_hash"] = send_code_obj.phone_code_hash
+                user_states[tg_id]["state"] = "INPUT_TG_CODE"
+                user_states[tg_id]["code_buffer"] = ""
+                
+                text_kb, markup_kb = get_number_keyboard()
+                await update.message.reply_text(text_kb, reply_markup=markup_kb, parse_mode="HTML")
+                
+            except Exception as e:
+                await update.message.reply_text(f"❌ Ошибка инициализации Telethon: {e}\nРегистрация завершена без юзербота. Вы можете настроить его позже.")
+                await finalize_registration(update, context, skip_ub=True)
 
-    # --- ПРИЕМ ОБЛАЧНОГО ПАРОЛЯ (2FA) --- (Оставляем текстовым, так как пароли буквенные)
-    elif state == "INPUT_TG_2FA":
-        client = user_states[tg_id]["client"]
-        try:
-            await client.sign_in(password=text)
-            await update.message.reply_text("✅ Двухфакторный пароль принят! Юзербот успешно запущен в фон.")
-            await client.disconnect()
-            await finalize_registration(update, context, skip_ub=False)
-        except PasswordHashInvalidError:
-            await update.message.reply_text("❌ Неверный облачный пароль! Попробуйте еще раз:")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка 2FA: {e}")
-            await client.disconnect()
-            del user_states[tg_id]
+        # --- ШАГ 6: ОБЛАЧНЫЙ ПАРОЛЬ 2FA ---
+        elif state == "INPUT_TG_2FA":
+            client = user_states[tg_id]["client"]
+            try:
+                await client.sign_in(password=text)
+                await update.message.reply_text("✅ Двухфакторный пароль принят! Юзербот успешно запущен.")
+                await client.disconnect()
+                await finalize_registration(update, context, skip_ub=False)
+            except PasswordHashInvalidError:
+                await update.message.reply_text("❌ Неверный облачный пароль! Попробуйте еще раз:")
+            except Exception as e:
+                await update.message.reply_text(f"❌ Ошибка 2FA: {e}")
+                await client.disconnect()
+                del user_states[tg_id]
 
-    # --- ХЕНДЛЕР ВХОДА ПО ТЕЛЕФОНУ В ПАНЕЛЬ ---
-    elif state == "LOGIN_PHONE":
-        users = load_file(USERS_FILE)
-        if text not in users:
-            await update.message.reply_text("❌ Пользователь с таким номером не найден.")
-            return
-        user_states[tg_id]["data"]["phone"] = text
-        user_states[tg_id]["state"] = "LOGIN_PASS"
-        await update.message.reply_text("🔒 Введи пароль от панели:")
-    elif state == "LOGIN_PASS":
-        p = user_states[tg_id]["data"]["phone"]
-        users = load_file(USERS_FILE)
-        if users[p]["password"] == text:
-            users[p]["telegram_id"] = tg_id
-            save_file(USERS_FILE, users)
-            del user_states[tg_id]
-            await update.message.reply_text("✅ Вход выполнен успешно!")
-            await show_main_menu(update, context, users[p], is_callback=False)
-        else:
-            await update.message.reply_text("❌ Неверный пароль!")
+        # --- АВТОРИЗАЦИЯ В СУЩЕСТВУЮЩУЮ ПАНЕЛЬ ---
+        elif state == "LOGIN_PHONE":
+            users = load_file(USERS_FILE)
+            if text not in users:
+                await update.message.reply_text("❌ Пользователь с таким номером не найден.")
+                return
+            user_states[tg_id]["data"]["phone"] = text
+            user_states[tg_id]["state"] = "LOGIN_PASS"
+            await update.message.reply_text("🔒 Введи пароль от панели:")
+            
+        elif state == "LOGIN_PASS":
+            p = user_states[tg_id]["data"]["phone"]
+            users = load_file(USERS_FILE)
+            if users[p]["password"] == text:
+                users[p]["telegram_id"] = tg_id
+                save_file(USERS_FILE, users)
+                del user_states[tg_id]
+                await update.message.reply_text("✅ Вход выполнен успешно!")
+                await show_main_menu(update, context, users[p], is_callback=False)
+            else:
+                await update.message.reply_text("❌ Неверный пароль!")
+                
+    except Exception as main_err:
+        await update.message.reply_text(f"💥 Критическая ошибка внутри хендлера текста: {main_err}")
 
 # ===== ОТДЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ПРОВЕРКИ СМС КОДА ИЗ КНОПОК =====
 async def process_tg_code(message, context, tg_id, code):
@@ -316,18 +323,16 @@ async def process_tg_code(message, context, tg_id, code):
     u_phone = user_states[tg_id]["data"]["phone"]
     
     try:
-        # Пытаемся залогиниться по коду собранному кнопками
         await client.sign_in(phone=u_phone, code=code, phone_code_hash=phone_code_hash)
-        
         await message.reply_text("✅ Авторизация успешна! Сессия сохранена на сервере.")
         await client.disconnect()
         await finalize_registration_by_msg(message, context, tg_id, skip_ub=False)
         
     except SessionPasswordNeededError:
         user_states[tg_id]["state"] = "INPUT_TG_2FA"
-        await message.reply_text("🔒 Аккаунт защищен двухфакторной аутентификацией.\n\n<b>Введите ваш Облачный Пароль (2FA) текстом:</b>", parse_mode="HTML")
+        await message.reply_text("🔒 Аккаунт защищен двухфакторной аутентификацией.\n\n<b>Введите ваш Облачный Пароль (2FA) текстом в ответ:</b>", parse_mode="HTML")
     except PhoneCodeInvalidError:
-        user_states[tg_id]["code_buffer"] = "" # Сбрасываем неверный код
+        user_states[tg_id]["code_buffer"] = "" 
         text_kb, markup_kb = get_number_keyboard()
         await message.reply_text("❌ Неверный код! Попробуйте ввести заново:\n\n" + text_kb, reply_markup=markup_kb, parse_mode="HTML")
     except Exception as e:
@@ -354,7 +359,7 @@ async def finalize_registration_by_msg(message, context, tg_id, skip_ub=False):
     del user_states[tg_id]
     
     await message.reply_text("🎉 Профиль сохранен в базе данных хостинга!")
-    # Показываем главное меню
+    
     subs = load_file(SUBS_FILE)
     sub = subs.get(str(tg_id), {"tier": 1, "expires": "unknown"})
     u_dir = get_user_modules_dir(tg_id)

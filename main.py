@@ -3,6 +3,8 @@ import json
 import logging
 import shutil
 import asyncio
+import random
+import string
 from datetime import datetime, timedelta, timezone
 import aiohttp
 
@@ -14,7 +16,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 # ─────────────────────────────────────────────
-# НАСТРОЙКИ И ПУТИ
+# НАСТРОЙКИ И ПУТИ К ФАЙЛАМ
 # ─────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "ТВОЙ_ТОКЕН_БОТА")
 ADMIN_PASSWORD = "uretracoin"
@@ -29,12 +31,13 @@ SUBS_FILE = os.path.join(DATA_DIR, "subscriptions.json")
 PROMO_FILE = os.path.join(DATA_DIR, "promocodes.json")
 RANKS_FILE = os.path.join(DATA_DIR, "user_ranks.json")
 
+# Пути к медиа
 PHOTO_AUTH = os.path.join(BASE_DIR, "images", "auth.jpg")
 PHOTO_MODULES = os.path.join(BASE_DIR, "images", "modules.jpg")
 PHOTO_SONYA_SAD = os.path.join(BASE_DIR, "images", "sonya_sad.jpg")
 PHOTO_SONYA_HAPPY = os.path.join(BASE_DIR, "images", "sonya_happy.jpg")
 
-# Состояния
+# Состояния ConversationHandler
 (
     REG_NICK, REG_PHONE, REG_PASS, 
     LOGIN_PHONE, LOGIN_PASS, 
@@ -42,6 +45,7 @@ PHOTO_SONYA_HAPPY = os.path.join(BASE_DIR, "images", "sonya_happy.jpg")
     WAIT_PROMO_ACTIVATE, SONYA_CHAT, MODULE_INSTALL
 ) = range(12)
 
+# Логирование
 logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(message)s",
     level=logging.INFO,
@@ -49,11 +53,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────
-# ПОТОКОБЕЗОПАСНЫЙ И АСИНХРОННЫЙ ДОСТУП К ФАЙЛАМ
-# ─────────────────────────────────────────────
 _file_lock = asyncio.Lock()
 
+# ─────────────────────────────────────────────
+# РАБОТА С БАЗОЙ ДАННЫХ (JSON)
+# ─────────────────────────────────────────────
 def load_json(path: str) -> dict:
     try:
         if os.path.exists(path):
@@ -170,7 +174,7 @@ async def get_sub_info(tg_id_str: str) -> dict:
         }
 
 # ─────────────────────────────────────────────
-# КЛАВИАТУРЫ
+# НАВИГАЦИОННЫЕ КЛАВИАТУРЫ
 # ─────────────────────────────────────────────
 def get_guest_kb():
     return InlineKeyboardMarkup([
@@ -193,7 +197,7 @@ def get_cancel_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="back_main")]])
 
 # ─────────────────────────────────────────────
-# ХЕНДЛЕРЫ И РОУТИНГ МЕНЮ
+# ОСНОВНОЙ КОРНЕВОЙ РОУТЕР И КОМАНДА /START
 # ─────────────────────────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
@@ -309,7 +313,7 @@ async def inline_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ─────────────────────────────────────────────
-# УПРАВЛЕНИЕ МОДУЛЯМИ
+# УПРАВЛЕНИЕ СЛОТАМИ ПЛАГИНОВ И МОДУЛЕЙ
 # ─────────────────────────────────────────────
 async def _show_modules_menu(message, tg_id):
     s_info = await get_sub_info(tg_id)
@@ -507,7 +511,7 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
     return ConversationHandler.END
 
 # ─────────────────────────────────────────────
-# АДМИН-ПАНЕЛЬ
+# АДМИН-ПАНЕЛЬ С ИСПРАВЛЕННОЙ СТРОКОЙ 584
 # ─────────────────────────────────────────────
 async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() != ADMIN_PASSWORD:
@@ -578,19 +582,24 @@ async def admin_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_generate_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        tier, days, max_uses = map(int, update.message.text.strip().split())
-        import random, string
+        parts = update.message.text.strip().split()
+        tier, days, max_uses = map(int, parts)
+        
         rnd = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        
+        # Полностью исправленный кусок кода!
         prefixes = {2: 'BASIC_', 3: 'PREMIUM_', 4: 'VIP_'}
-        code = f"{prefixes[tier]}{rnd}"
+        prefix = prefixes[tier]
+        code = f"{prefix}{rnd}"
         
         async with _file_lock:
             promos = load_json(PROMO_FILE)
             promos[code] = {"tier": tier, "days": days, "max_uses": max_uses, "used_by": []}
             save_json(PROMO_FILE, promos)
         await update.message.reply_text(f"✅ Создан код: `{code}`", parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_kb())
-    except:
-        await update.message.reply_text("❌ Ошибка ввода.")
+    except Exception as e:
+        logger.error(f"Ошибка промокода: {e}")
+        await update.message.reply_text("❌ Ошибка ввода параметров подписки.")
     return ConversationHandler.END
 
 async def admin_spam_sender(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -603,7 +612,7 @@ async def admin_spam_sender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ─────────────────────────────────────────────
-# ЗАПУСК
+# ТОЧКА ВХОДА И ИНИЦИАЛИЗАЦИЯ
 # ─────────────────────────────────────────────
 def main():
     init_system()
@@ -637,7 +646,7 @@ def main():
     )
     
     app.add_handler(conv_handler)
-    logger.info("Бот запущен на новой архитектуре без конфликтов потоков!")
+    logger.info("Асинхронный Telegram Bot успешно запущен!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":

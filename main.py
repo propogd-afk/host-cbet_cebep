@@ -358,7 +358,8 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔐 Авторизация — Шаг 1 из 4\n\n"
             "Придумай себе никнейм — он будет отображаться в профиле.\n\n"
             "Можно использовать латиницу, кириллицу или цифры.\n"
-            "Пример: DarkUser, Артём, xXbotXx",
+            "Пример: DarkUser, Артём, xXbotXx\n\n"
+            "Канал проекта: @userbotcbet",
             get_cancel_kb()
         )
         return "REG_NICK"
@@ -477,18 +478,83 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mods_text = "\n".join(f"  • {m['name']}.py — {m.get('date','?')}" for m in mods_list)
         else:
             mods_text = "  модули не установлены"
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ Установить модуль", callback_data="mod_install")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]
-        ])
+
+        # Строим клавиатуру: кнопка удаления для каждого модуля
+        kb_rows = []
+        for m in mods_list:
+            kb_rows.append([
+                InlineKeyboardButton(f"🗑 {m['name']}.py", callback_data=f"mod_delete_{m['name']}")
+            ])
+        kb_rows.append([InlineKeyboardButton("➕ Установить модуль", callback_data="mod_install")])
+        kb_rows.append([InlineKeyboardButton("◀️ Назад", callback_data="back_main")])
+        kb = InlineKeyboardMarkup(kb_rows)
+
         await send_photo(
             query.message, PHOTO_MODULES,
             f"🧩 Модули — UserBot | Ru\n\n"
             f"Здесь ты управляешь плагинами своего юзербота.\n"
             f"Модули загружаются прямо в Telethon-сессию.\n\n"
             f"Слотов занято: {used}/5\n\n"
-            f"Установленные модули:\n{mods_text}",
+            f"Установленные модули:\n{mods_text}\n\n"
+            f"Нажми на модуль чтобы удалить его.",
             kb
+        )
+        return "MENU"
+
+    # ── Удаление модуля ──
+    if data.startswith("mod_delete_"):
+        mod_name = data[len("mod_delete_"):]
+        m_file = os.path.join(DATA_DIR, f"user_modules_{tg_id}.json")
+
+        async with _file_lock:
+            m_data = load_json(m_file)
+            before = len(m_data.get("modules", []))
+            m_data["modules"] = [m for m in m_data.get("modules", []) if m["name"] != mod_name]
+            after = len(m_data["modules"])
+            save_json(m_file, m_data)
+
+        # Удаляем .py файл с диска
+        mod_path = os.path.join(MODULES_DIR, f"user_{tg_id}", f"{mod_name}.py")
+        if os.path.exists(mod_path):
+            try:
+                os.remove(mod_path)
+            except Exception as e:
+                logger.error(f"Ошибка удаления файла модуля {mod_path}: {e}")
+
+        # Убираем из кэша загруженных модулей
+        if tg_id in LOADED_MODULES and mod_name in LOADED_MODULES[tg_id]:
+            LOADED_MODULES[tg_id].remove(mod_name)
+
+        if before != after:
+            await send_plain(query.message, f"🗑 Модуль {mod_name}.py удалён.", None)
+            # Перезапускаем юзербота если онлайн
+            if tg_id in USER_BOTS:
+                async with _file_lock:
+                    users_reload = load_json(USERS_FILE)
+                u_info = users_reload.get(tg_id, {})
+                if u_info.get("api_id") and u_info.get("api_hash"):
+                    await start_user_bot(tg_id, int(u_info["api_id"]), u_info["api_hash"])
+        else:
+            await send_plain(query.message, f"⚠️ Модуль {mod_name} не найден.", None)
+
+        # Показываем обновлённый список модулей
+        async with _file_lock:
+            m_data = load_json(m_file)
+        used      = len(m_data.get("modules", []))
+        mods_list = m_data.get("modules", [])
+        mods_text = "\n".join(f"  • {m['name']}.py — {m.get('date','?')}" for m in mods_list) if mods_list else "  модули не установлены"
+        kb_rows = []
+        for m in mods_list:
+            kb_rows.append([InlineKeyboardButton(f"🗑 {m['name']}.py", callback_data=f"mod_delete_{m['name']}")])
+        kb_rows.append([InlineKeyboardButton("➕ Установить модуль", callback_data="mod_install")])
+        kb_rows.append([InlineKeyboardButton("◀️ Назад", callback_data="back_main")])
+        await send_photo(
+            query.message, PHOTO_MODULES,
+            f"🧩 Модули — UserBot | Ru\n\n"
+            f"Слотов занято: {used}/5\n\n"
+            f"Установленные модули:\n{mods_text}\n\n"
+            f"Нажми на модуль чтобы удалить его.",
+            InlineKeyboardMarkup(kb_rows)
         )
         return "MENU"
 
@@ -638,7 +704,8 @@ async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2. Войди в свой аккаунт\n"
         "3. Раздел API development tools\n"
         "4. Скопируй поле api_id\n\n"
-        "Выглядит как число: 12345678",
+        "Выглядит как число: 12345678\n\n"
+        "Помощь: @userbotcbet",
         get_cancel_kb()
     )
     return "LOGIN_API_ID"
@@ -660,7 +727,8 @@ async def login_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Тот же раздел на my.telegram.org\n"
         "Поле api_hash\n\n"
         "Выглядит так: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6\n\n"
-        "Ключ хранится только на сервере.",
+        "Ключ хранится только на сервере.\n\n"
+        "Помощь: @userbotcbet",
         get_cancel_kb()
     )
     return "LOGIN_API_HASH"

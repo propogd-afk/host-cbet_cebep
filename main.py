@@ -28,7 +28,6 @@ TIERS = {
 }
 
 user_states = {} 
-# Глобальный loop для синхронизации всех потоков
 global_loop = asyncio.get_event_loop()
 
 # Вспомогательные функции для БД
@@ -231,7 +230,7 @@ def handle_text(update: Update, context: CallbackContext):
                 return
             user_states[tg_id]["data"]["phone"] = text
             user_states[tg_id]["state"] = "REG_PASS"
-            update.message.reply_text("Придумай пароль для входа в панель бота:")
+            update.message.reply_text("Придумай пароль для входа в panel бота:")
             
         elif state == "REG_PASS":
             user_states[tg_id]["data"]["password"] = text
@@ -258,7 +257,6 @@ def handle_text(update: Update, context: CallbackContext):
             update.message.reply_text("⏳ Подключаюсь к серверам Telegram для отправки СМС-кода...")
             
             try:
-                # Используем один глобальный синхронизированный loop
                 asyncio.set_event_loop(global_loop)
                 
                 client = TelegramClient(sess_path, int(user_states[tg_id]["data"]["api_id"]), user_states[tg_id]["data"]["api_hash"], loop=global_loop)
@@ -288,7 +286,9 @@ def handle_text(update: Update, context: CallbackContext):
                 global_loop.run_until_complete(client.sign_in(password=text))
                 
                 update.message.reply_text("✅ Двухфакторный пароль принят! Юзербот успешно запущен.")
-                global_loop.run_until_complete(client.disconnect())
+                try: global_loop.run_until_complete(client.disconnect())
+                except: pass
+                
                 finalize_registration(update, context, skip_ub=False)
             except PasswordHashInvalidError:
                 update.message.reply_text("❌ Неверный облачный пароль! Попробуйте еще раз:")
@@ -336,7 +336,9 @@ def process_tg_code(message, context, tg_id, code):
             
         global_loop.run_until_complete(client.sign_in(phone=u_phone, code=code, phone_code_hash=phone_code_hash))
         message.reply_text("✅ Авторизация успешна! Сессия сохранена на сервере.")
-        global_loop.run_until_complete(client.disconnect())
+        try: global_loop.run_until_complete(client.disconnect())
+        except: pass
+        
         finalize_registration_by_msg(message, context, tg_id, skip_ub=False)
         
     except SessionPasswordNeededError:
@@ -368,18 +370,19 @@ def finalize_registration_by_msg(message, context, tg_id, skip_ub=False):
     save_file(USERS_FILE, users)
     get_sub(tg_id)
     
+    user_data = users[phone]
     del user_states[tg_id]
     message.reply_text("🎉 Профиль сохранен в базе данных хостинга!")
     
-    subs = load_file(SUBS_FILE)
-    sub = subs.get(str(tg_id), {"tier": 1, "expires": "unknown"})
+    # Исправленный безопасный вызов меню
+    sub = get_sub(tg_id)
     u_dir = get_user_modules_dir(tg_id)
     session_exists = os.path.exists(os.path.join(u_dir, str(phone) + ".session"))
     status_ub = "🟢 Запущен" if session_exists else "🔴 Не авторизован"
 
     text = (
         "🏠 <b>Панель Управления Юзерботом</b>\n\n"
-        "Аккаунт: <code>" + str(users[phone]['nick']) + "</code>\n"
+        "Аккаунт: <code>" + str(user_data['nick']) + "</code>\n"
         "Статус юзербота: <b>" + status_ub + "</b>\n"
         "Тариф: <b>" + str(TIERS[sub['tier']]['name']) + "</b>\n"
         "Доступен до: " + str(sub['expires'][:10])
@@ -407,9 +410,29 @@ def finalize_registration(update: Update, context: CallbackContext, skip_ub=Fals
     save_file(USERS_FILE, users)
     get_sub(tg_id)
     
+    user_data = users[phone]
     del user_states[tg_id]
     update.message.reply_text("🎉 Профиль сохранен в базе данных хостинга!")
-    show_main_menu(update, context, users[phone], is_callback=False)
+    
+    # Исправленный безопасный вызов меню
+    sub = get_sub(tg_id)
+    u_dir = get_user_modules_dir(tg_id)
+    session_exists = os.path.exists(os.path.join(u_dir, str(phone) + ".session"))
+    status_ub = "🟢 Запущен" if session_exists else "🔴 Не авторизован"
+
+    text = (
+        "🏠 <b>Панель Управления Юзерботом</b>\n\n"
+        "Аккаунт: <code>" + str(user_data['nick']) + "</code>\n"
+        "Статус юзербота: <b>" + status_ub + "</b>\n"
+        "Тариф: <b>" + str(TIERS[sub['tier']]['name']) + "</b>\n"
+        "Доступен до: " + str(sub['expires'][:10])
+    )
+    keyboard = [
+        [InlineKeyboardButton("👤 Профиль", callback_data="menu_profile"), InlineKeyboardButton("⚙️ Модули", callback_data="menu_modules")],
+        [InlineKeyboardButton("❌ Отключить юзербота", callback_data="reset_api") if session_exists else InlineKeyboardButton("🚀 Авторизовать / Запустить", callback_data="start_ub_auth")],
+        [InlineKeyboardButton("❌ Выйти из панели", callback_data="menu_logout")]
+    ]
+    update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 def main():
     os.makedirs(MODULES_DIR, exist_ok=True)
@@ -420,7 +443,7 @@ def main():
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
     
-    print("🚀 Хостинг с синхронизированными кнопками запущен!")
+    print("🚀 Всё готово! Бот полностью стабилизирован.")
     updater.start_polling()
     updater.idle()
 

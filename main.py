@@ -1,5 +1,5 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-# Используем синтаксис v13 (Updater, Dispatcher вместо Application)
+# Используем синтаксис python-telegram-bot v13
 from telegram.ext import Updater, CallbackQueryHandler, CommandHandler, MessageHandler, Filters, CallbackContext
 import json
 import os
@@ -7,6 +7,7 @@ import random
 import string
 import importlib.util
 import sys
+import asyncio
 from datetime import datetime, timedelta
 
 # Импортируем Telethon для работы с сессиями
@@ -231,7 +232,7 @@ def handle_text(update: Update, context: CallbackContext):
                 return
             user_states[tg_id]["data"]["phone"] = text
             user_states[tg_id]["state"] = "REG_PASS"
-            update.message.reply_text("Придумай пароль для входа в панель бота:")
+            update.message.reply_text("Придумай пароль для входа в dynamic панель бота:")
             
         elif state == "REG_PASS":
             user_states[tg_id]["data"]["password"] = text
@@ -258,18 +259,13 @@ def handle_text(update: Update, context: CallbackContext):
             update.message.reply_text("⏳ Подключаюсь к серверам Telegram для отправки СМС-кода...")
             
             try:
-                # Внутри синхронного хендлера v13 запускаем асинхронный Telethon через loop
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                
+                loop = asyncio.get_event_loop()
                 client = TelegramClient(sess_path, int(user_states[tg_id]["data"]["api_id"]), user_states[tg_id]["data"]["api_hash"])
                 loop.run_until_complete(client.connect())
                 
                 send_code_obj = loop.run_until_complete(client.send_code_request(u_phone))
                 
                 user_states[tg_id]["client"] = client
-                user_states[tg_id]["loop"] = loop
                 user_states[tg_id]["phone_code_hash"] = send_code_obj.phone_code_hash
                 user_states[tg_id]["state"] = "INPUT_TG_CODE"
                 user_states[tg_id]["code_buffer"] = ""
@@ -283,9 +279,15 @@ def handle_text(update: Update, context: CallbackContext):
 
         elif state == "INPUT_TG_2FA":
             client = user_states[tg_id]["client"]
-            loop = user_states[tg_id]["loop"]
+            loop = asyncio.get_event_loop()
             try:
+                # Проверяем и восстанавливаем подключение клиента перед вводом 2FA
+                if not client.is_connected():
+                    loop.run_until_complete(client.connect())
+                
+                # Отправляем облачный пароль
                 loop.run_until_complete(client.sign_in(password=text))
+                
                 update.message.reply_text("✅ Двухфакторный пароль принят! Юзербот успешно запущен.")
                 loop.run_until_complete(client.disconnect())
                 finalize_registration(update, context, skip_ub=False)
@@ -293,8 +295,11 @@ def handle_text(update: Update, context: CallbackContext):
                 update.message.reply_text("❌ Неверный облачный пароль! Попробуйте еще раз:")
             except Exception as e:
                 update.message.reply_text("❌ Ошибка 2FA: " + str(e))
-                loop.run_until_complete(client.disconnect())
-                del user_states[tg_id]
+                try:
+                    loop.run_until_complete(client.disconnect())
+                except:
+                    pass
+                if tg_id in user_states: del user_states[tg_id]
 
         elif state == "LOGIN_PHONE":
             users = load_file(USERS_FILE)
@@ -323,11 +328,14 @@ def handle_text(update: Update, context: CallbackContext):
 # ===== ПРОВЕРКА КОДА ИЗ КНОПОК =====
 def process_tg_code(message, context, tg_id, code):
     client = user_states[tg_id]["client"]
-    loop = user_states[tg_id]["loop"]
+    loop = asyncio.get_event_loop()
     phone_code_hash = user_states[tg_id]["phone_code_hash"]
     u_phone = user_states[tg_id]["data"]["phone"]
     
     try:
+        if not client.is_connected():
+            loop.run_until_complete(client.connect())
+            
         loop.run_until_complete(client.sign_in(phone=u_phone, code=code, phone_code_hash=phone_code_hash))
         message.reply_text("✅ Авторизация успешна! Сессия сохранена на сервере.")
         loop.run_until_complete(client.disconnect())
@@ -342,7 +350,10 @@ def process_tg_code(message, context, tg_id, code):
         message.reply_text("❌ Неверный код! Заново:\n\n" + text_kb, reply_markup=markup_kb, parse_mode="HTML")
     except Exception as e:
         message.reply_text("❌ Ошибка: " + str(e))
-        loop.run_until_complete(client.disconnect())
+        try:
+            loop.run_until_complete(client.disconnect())
+        except:
+            pass
         if tg_id in user_states: del user_states[tg_id]
 
 # ===== СОХРАНЕНИЕ ДАННЫХ =====
@@ -406,7 +417,6 @@ def finalize_registration(update: Update, context: CallbackContext, skip_ub=Fals
 
 def main():
     os.makedirs(MODULES_DIR, exist_ok=True)
-    # Инициализация для python-telegram-bot v13
     updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
     
@@ -414,7 +424,7 @@ def main():
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
     
-    print("🚀 Хостинг-панель запущена на v13!")
+    print("🚀 Хостинг-панель успешно запущена на v13!")
     updater.start_polling()
     updater.idle()
 

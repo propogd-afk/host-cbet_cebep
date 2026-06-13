@@ -461,7 +461,24 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── REG_NICK: Ввод локального имени юзера ────────────────────────
 
 async def reg_nick(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["reg_nick"] = update.message.text.strip()
+    nick = update.message.text.strip()
+
+    # Проверяем не занят ли никнейм
+    async with _file_lock:
+        users = load_json(USERS_FILE)
+    taken = any(
+        v.get("nick", "").lower() == nick.lower()
+        for v in users.values()
+    )
+    if taken:
+        await update.message.reply_text(
+            f"⚠️ Никнейм *{nick}* уже занят. Введите другой:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_cancel_kb()
+        )
+        return "REG_NICK"
+
+    context.user_data["reg_nick"] = nick
     await send_menu_photo(
         update, PHOTO_AUTH,
         "📱 *Шаг 2 из 4*\n\nВведите номер телефона в формате `+79XXXXXXXXX`:",
@@ -481,6 +498,23 @@ async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_cancel_kb()
         )
         return "LOGIN_PHONE"
+
+    # Проверяем не зарегистрирован ли уже этот номер
+    async with _file_lock:
+        users = load_json(USERS_FILE)
+    taken = any(
+        v.get("phone", "") == phone and v.get("authenticated", False)
+        for v in users.values()
+    )
+    if taken:
+        await update.message.reply_text(
+            f"⚠️ Номер `{phone}` уже зарегистрирован в системе.\n\n"
+            "Если это ваш номер — обратитесь к администратору.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_cancel_kb()
+        )
+        return "LOGIN_PHONE"
+
     context.user_data["phone"] = phone
     await update.message.reply_text(
         "🔑 *Шаг 3 из 4*\n\nВведите ваш **API ID** (только цифры):",

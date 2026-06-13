@@ -477,15 +477,22 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         used      = len(m_data.get("modules", []))
         mods_list = m_data.get("modules", [])
         if mods_list:
-            mods_text = "\n".join(f"  • {m['name']}.py — {m.get('date','?')}" for m in mods_list)
+            def _mod_label(m):
+                src = m.get("source", "custom")
+                badge = "👤" if src == "custom" or src is None else "🛒"
+                return f"  {badge} {m['name']}.py — {m.get('date','?')}"
+            mods_text = "\n".join(_mod_label(m) for m in mods_list)
+            mods_text += "\n\n👤 — свой модуль   🛒 — из магазина"
         else:
             mods_text = "  модули не установлены"
 
         # Строим клавиатуру: кнопка удаления для каждого модуля
         kb_rows = []
         for m in mods_list:
+            src = m.get("source", "custom")
+            badge = "👤" if src == "custom" or src is None else "🛒"
             kb_rows.append([
-                InlineKeyboardButton(f"🗑 {m['name']}.py", callback_data=f"mod_delete_{m['name']}")
+                InlineKeyboardButton(f"🗑 {badge} {m['name']}.py", callback_data=f"mod_delete_{m['name']}")
             ])
         kb_rows.append([InlineKeyboardButton("🛒 Магазин модулей", callback_data="mod_shop")])
         kb_rows.append([InlineKeyboardButton("➕ Установить своё .py", callback_data="mod_install")])
@@ -545,7 +552,13 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             m_data = load_json(m_file)
         used      = len(m_data.get("modules", []))
         mods_list = m_data.get("modules", [])
-        mods_text = "\n".join(f"  • {m['name']}.py — {m.get('date','?')}" for m in mods_list) if mods_list else "  модули не установлены"
+        if mods_list:
+            mods_text = "\n".join(
+                f"  {'👤' if m.get('source','custom') in ('custom', None) else '🛒'} {m['name']}.py — {m.get('date','?')}" 
+                for m in mods_list
+            ) + "\n\n👤 — свой   🛒 — магазин"
+        else:
+            mods_text = "  модули не установлены"
         kb_rows = []
         for m in mods_list:
             kb_rows.append([InlineKeyboardButton(f"🗑 {m['name']}.py", callback_data=f"mod_delete_{m['name']}")])
@@ -1063,7 +1076,7 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
 
     async with _file_lock:
         m_data.setdefault("modules", [])
-        m_data["modules"].append({"name": mod_name, "date": datetime.now().strftime("%d.%m.%Y")})
+        m_data["modules"].append({"name": mod_name, "date": datetime.now().strftime("%d.%m.%Y"), "source": "custom"})
         save_json(m_file, m_data)
 
     if tg_id in USER_BOTS:

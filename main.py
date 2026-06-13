@@ -89,6 +89,11 @@ def init_system():
         save_json(PROMO_FILE, {
             "URETRACOIN": {"tier": 3, "days": 90, "max_uses": 100, "used_by": []}
         })
+    # Проверяем наличие картинок
+    for img in ("auth.jpg", "modules.jpg", "sonya_sad.jpg"):
+        img_path = os.path.join(IMAGES_DIR, img)
+        if not os.path.exists(img_path):
+            logger.warning(f"Картинка отсутствует: {img_path}")
 
 def is_user_authorized(tg_id: str) -> bool:
     users = load_json(USERS_FILE)
@@ -335,10 +340,10 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_auth:
             await query.message.reply_text("⚠️ Сессия уже создана!", reply_markup=get_user_kb())
             return "MENU"
-        await query.message.reply_text(
-            "📝 *Шаг 1 из 4*\n\nВведите ваш локальный никнейм:",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=get_cancel_kb()
+        await send_menu_photo(
+            query, PHOTO_AUTH,
+            "📝 *Шаг 1 из 4*\n\nПридумайте *никнейм* для вашего профиля:",
+            get_cancel_kb()
         )
         return "REG_NICK"
 
@@ -516,10 +521,10 @@ async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "LOGIN_PHONE"
 
     context.user_data["phone"] = phone
-    await update.message.reply_text(
-        "🔑 *Шаг 3 из 4*\n\nВведите ваш **API ID** (только цифры):",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=get_cancel_kb()
+    await send_menu_photo(
+        update, PHOTO_AUTH,
+        "🔑 *Шаг 3 из 4*\n\nВведите ваш *API ID* (только цифры):",
+        get_cancel_kb()
     )
     return "LOGIN_API_ID"
 
@@ -535,10 +540,10 @@ async def login_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return "LOGIN_API_ID"
     context.user_data["api_id"] = int(val)
-    await update.message.reply_text(
-        "🔑 *Шаг 4 из 4*\n\nВведите ваш **API HASH**:",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=get_cancel_kb()
+    await send_menu_photo(
+        update, PHOTO_AUTH,
+        "🔑 *Шаг 4 из 4*\n\nВведите ваш *API HASH*:",
+        get_cancel_kb()
     )
     return "LOGIN_API_HASH"
 
@@ -565,10 +570,10 @@ async def login_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Показываем пин-пад с пустым вводом
         context.user_data["pin_entered"] = ""
-        await update.message.reply_text(
-            "📩 Код отправлен в приложение Telegram.\n\n"
-            "Введите код через пин-пад ниже:",
-            reply_markup=get_pinpad_kb("")
+        await send_menu_photo(
+            update, PHOTO_AUTH,
+            "📩 *Код отправлен* в приложение Telegram.\n\nВведите его через пин-пад ниже 👇",
+            get_pinpad_kb("")
         )
         return "WAIT_CODE"
 
@@ -687,12 +692,12 @@ async def _do_sign_in(update, context, tg_id: str, code: str):
         # У юзера включена двухфакторная аутентификация — запрашиваем пароль
         logger.info(f"2FA требуется для {tg_id}")
         context.user_data["awaiting_2fa"] = True
-        await query.message.reply_text(
+        await send_menu_photo(
+            query, PHOTO_AUTH,
             "🔐 *Двухфакторная аутентификация*\n\n"
             "На вашем аккаунте включена 2FA.\n"
             "Введите облачный пароль Telegram:",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=get_cancel_kb()
+            get_cancel_kb()
         )
         return "WAIT_2FA"
 

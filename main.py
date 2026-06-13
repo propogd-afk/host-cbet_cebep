@@ -259,11 +259,15 @@ def handle_text(update: Update, context: CallbackContext):
             update.message.reply_text("⏳ Подключаюсь к серверам Telegram для отправки СМС-кода...")
             
             try:
-                # ПРИНУДИТЕЛЬНО СОЗДАЕМ НОВЫЙ LOOP ДЛЯ ЭТОГО ПОТОКА
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+                # ГАРАНТИРОВАННОЕ СОЗДАНИЕ LOOP ДЛЯ ПОТОКА ДИСПЕТЧЕРА
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
                 
-                client = TelegramClient(sess_path, int(user_states[tg_id]["data"]["api_id"]), user_states[tg_id]["data"]["api_hash"])
+                # ЯВНО ПЕРЕДАЕМ LOOP В TELETHON CLIENT
+                client = TelegramClient(sess_path, int(user_states[tg_id]["data"]["api_id"]), user_states[tg_id]["data"]["api_hash"], loop=loop)
                 loop.run_until_complete(client.connect())
                 
                 send_code_obj = loop.run_until_complete(client.send_code_request(u_phone))
@@ -282,10 +286,12 @@ def handle_text(update: Update, context: CallbackContext):
 
         elif state == "INPUT_TG_2FA":
             client = user_states[tg_id]["client"]
-            
-            # ПРИНУДИТЕЛЬНО СОЗДАЕМ НОВЫЙ LOOP ДЛЯ ЭТОГО ПОТОКА
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
             try:
                 if not client.is_connected():
                     loop.run_until_complete(client.connect())
@@ -330,10 +336,11 @@ def handle_text(update: Update, context: CallbackContext):
 # ===== ПРОВЕРКА КОДА ИЗ КНОПОК =====
 def process_tg_code(message, context, tg_id, code):
     client = user_states[tg_id]["client"]
-    
-    # ПРИНУДИТЕЛЬНО СОЗДАЕМ НОВЫЙ LOOP ДЛЯ ЭТОГО ПОТОКА
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     
     phone_code_hash = user_states[tg_id]["phone_code_hash"]
     u_phone = user_states[tg_id]["data"]["phone"]

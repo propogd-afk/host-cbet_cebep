@@ -183,7 +183,8 @@ async def auto_run_existing_bots():
 
 def get_guest_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Создать Юзербота (Вход)", callback_data="g_reg")],
+        [InlineKeyboardButton("🚀 Регистрация", callback_data="g_reg")],
+        [InlineKeyboardButton("🔑 Войти (уже есть аккаунт)", callback_data="g_login")],
         [InlineKeyboardButton("👑 Админ-Панель", callback_data="g_admin")]
     ])
 
@@ -329,11 +330,17 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_user_kb()
         )
     else:
-        await update.message.reply_text(
-            "👋 *UserBot Manager*\n\nАктивных сессий не найдено.\n"
-            "Нажмите кнопку ниже для настройки.",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=get_guest_kb()
+        await send_menu_photo(
+            update, PHOTO_AUTH,
+            "👾 *UserBot | Ru*\n\n"
+            "Добро пожаловать в систему управления юзерботами!\n\n"
+            "Здесь ты можешь подключить свой Telegram-аккаунт и установить модули — "
+            "автоответчики, инструменты автоматизации, фильтры и многое другое.\n\n"
+            "⚡️ Движок: *Telethon*\n"
+            "🧩 Система модулей: *как в Hikka*\n"
+            "👤 Автор: @cbet_cebep\n\n"
+            "👇 Нажми кнопку чтобы начать:",
+            get_guest_kb()
         )
     return "MENU"
 
@@ -376,10 +383,29 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return "MENU"
         await send_menu_photo(
             query, PHOTO_AUTH,
-            "📝 *Шаг 1 из 4*\n\nПридумайте *никнейм* для вашего профиля:",
+            "🔐 *Авторизация — Шаг 1 из 4*\n\n"
+            "Придумай себе *никнейм* — он будет отображаться в профиле "
+            "и в панели администратора.\n\n"
+            "💡 Можно использовать латиницу, кириллицу или цифры.\n"
+            "Пример: `Dark_User`, `Артём`, `xX_bot_Xx`",
             get_cancel_kb()
         )
         return "REG_NICK"
+
+    if data == "g_login":
+        if is_auth:
+            await query.message.reply_text("⚠️ Ты уже авторизован!", reply_markup=get_user_kb())
+            return "MENU"
+        await send_menu_photo(
+            query, PHOTO_AUTH,
+            "🔑 *Вход в существующий аккаунт*\n\n"
+            "Введи номер телефона привязанный к твоему Telegram-аккаунту.\n\n"
+            "Мы найдём твою сессию и восстановим юзербота.\n"
+            "Формат: `+79001234567`",
+            get_cancel_kb()
+        )
+        context.user_data["login_mode"] = "existing"
+        return "LOGIN_PHONE_EXISTING"
 
     if data == "g_admin":
         await query.message.reply_text(
@@ -464,7 +490,13 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "u_sonya":
         await send_menu_photo(
             query, PHOTO_SONYA_SAD,
-            "🤖 *Соня (ИИ-ассистент)*\n\n«Соня сейчас отдыхает, напишите позже!»",
+            "🤖 *Соня — ИИ-ассистент*\n\n"
+            "Соня — твой персональный ИИ-помощник внутри юзербота.\n\n"
+            "Она умеет отвечать на вопросы, помогать с настройкой модулей "
+            "и просто поддержать разговор в любое время суток.\n\n"
+            "😴 *Сейчас Соня отдыхает...*\n"
+            "Функция ИИ-чата скоро будет доступна. Следи за обновлениями!\n\n"
+            "📢 Канал: @cbet_cebep",
             get_cancel_kb()
         )
         return "SONYA_CHAT"
@@ -475,9 +507,14 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             m_data = load_json(m_file)
         used = len(m_data.get("modules", []))
         mods_list = m_data.get("modules", [])
-        txt = f"⚙️ *Управление модулями*\n\n📊 Слотов занято: `{used}/5`\n"
-        if mods_list:
-            txt += "\n".join(f"  • `{m['name']}.py`" for m in mods_list)
+        mods_text = "\n".join(f"  • `{m['name']}.py` — установлен {m.get('date','?')}" for m in mods_list) if mods_list else "  _модули не установлены_"
+        txt = (
+            f"🧩 *Модули — UserBot | Ru*\n\n"
+            f"Здесь ты управляешь плагинами своего юзербота.\n"
+            f"Модули загружаются прямо в твою Telethon-сессию.\n\n"
+            f"📊 Слотов занято: `{used}/5`\n\n"
+            f"*Установленные модули:*\n{mods_text}"
+        )
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ Установить модуль", callback_data="mod_install")],
             [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]
@@ -495,6 +532,110 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MODULE_INSTALL"
 
     return "MENU"
+
+
+# ─── LOGIN_PHONE_EXISTING: Вход по телефону (уже зарегистрирован) ──
+
+async def login_phone_existing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Вход для уже зарегистрированного юзера — ищем по номеру телефона."""
+    phone = update.message.text.strip()
+
+    if not phone.startswith("+") or not phone[1:].isdigit():
+        await update.message.reply_text(
+            "⚠️ Неверный формат. Пример: `+79001234567`\n\nПовторите ввод:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_cancel_kb()
+        )
+        return "LOGIN_PHONE_EXISTING"
+
+    async with _file_lock:
+        users = load_json(USERS_FILE)
+
+    # Ищем юзера по номеру телефона
+    found_id = None
+    found_user = None
+    for uid, udata in users.items():
+        if udata.get("phone") == phone:
+            found_id = uid
+            found_user = udata
+            break
+
+    if not found_id:
+        await update.message.reply_text(
+            "❌ Номер `" + phone + "` не найден в системе.\n\n"
+            "Если ты новый пользователь — используй *Регистрацию*.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_guest_kb()
+        )
+        return "MENU"
+
+    # Проверяем наличие api_id и api_hash
+    if not found_user.get("api_id") or not found_user.get("api_hash"):
+        await update.message.reply_text(
+            "⚠️ Данные аккаунта повреждены. Необходима повторная регистрация.",
+            reply_markup=get_guest_kb()
+        )
+        return "MENU"
+
+    # Восстанавливаем данные в context для переиспользования login flow
+    context.user_data["phone"]    = phone
+    context.user_data["api_id"]   = int(found_user["api_id"])
+    context.user_data["api_hash"] = found_user["api_hash"]
+    context.user_data["reg_nick"] = found_user.get("nick", f"User_{found_id[:4]}")
+    context.user_data["login_existing_id"] = found_id
+
+    session_file = os.path.join(DATA_DIR, f"session_{found_id}.session")
+
+    # Если сессия жива — просто запускаем юзербота
+    if os.path.exists(session_file):
+        await update.message.reply_text("⏳ Восстанавливаем сессию...")
+        try:
+            await start_user_bot(found_id, int(found_user["api_id"]), found_user["api_hash"])
+            if found_id in USER_BOTS:
+                # Помечаем как авторизованного
+                async with _file_lock:
+                    users_w = load_json(USERS_FILE)
+                    users_w[found_id]["authenticated"] = True
+                    save_json(USERS_FILE, users_w)
+                await update.message.reply_text(
+                    f"🎉 *Добро пожаловать обратно, {found_user.get('nick', 'Пользователь')}!*\n\n"
+                    "Юзербот восстановлен и активен.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=get_user_kb()
+                )
+                return "MENU"
+        except Exception as e:
+            logger.warning(f"Не удалось восстановить сессию {found_id}: {e}")
+
+    # Сессии нет — запрашиваем новый код через Telethon
+    await update.message.reply_text("⏳ Сессия истекла, запрашиваем новый код...")
+    session_path = os.path.join(DATA_DIR, f"session_{found_id}")
+    client = TelegramClient(session_path, int(found_user["api_id"]), found_user["api_hash"])
+
+    try:
+        await client.connect()
+        sent_code = await client.send_code_request(phone)
+        context.user_data["client"]          = client
+        context.user_data["phone_code_hash"] = sent_code.phone_code_hash
+        context.user_data["pin_entered"]     = ""
+
+        await send_menu_photo(
+            update, PHOTO_AUTH,
+            "📩 *Код отправлен!*\n\n"
+            "Telegram прислал код в приложение.\n"
+            "Введи его через пин-пад ниже 👇",
+            get_pinpad_kb("")
+        )
+        return "WAIT_CODE"
+
+    except Exception as e:
+        logger.error(f"Ошибка при повторном входе {found_id}: {e}")
+        await update.message.reply_text(
+            f"❌ Ошибка: `{e}`\n\nПопробуй снова — /start",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_guest_kb()
+        )
+        return "MENU"
 
 
 # ─── REG_NICK: Ввод локального имени юзера ────────────────────────
@@ -520,7 +661,11 @@ async def reg_nick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["reg_nick"] = nick
     await send_menu_photo(
         update, PHOTO_AUTH,
-        "📱 *Шаг 2 из 4*\n\nВведите номер телефона в формате `+79XXXXXXXXX`:",
+        "📱 *Авторизация — Шаг 2 из 4*\n\n"
+        "Введи номер телефона привязанный к твоему Telegram-аккаунту.\n\n"
+        "На него придёт код подтверждения от Telegram.\n"
+        "Формат: `+79001234567` или `+380XXXXXXXXX`\n\n"
+        "⚠️ Мы не храним твой номер в открытом виде и не используем его для рассылок.",
         get_cancel_kb()
     )
     return "LOGIN_PHONE"
@@ -557,7 +702,14 @@ async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["phone"] = phone
     await send_menu_photo(
         update, PHOTO_AUTH,
-        "🔑 *Шаг 3 из 4*\n\nВведите ваш *API ID* (только цифры):",
+        "🔑 *Авторизация — Шаг 3 из 4*\n\n"
+        "Введи свой *API ID* — это числовой идентификатор твоего приложения Telegram.\n\n"
+        "Как получить:\n"
+        "1. Зайди на my.telegram.org\n"
+        "2. Войди в свой аккаунт\n"
+        "3. Открой раздел *API development tools*\n"
+        "4. Скопируй поле *App api_id*\n\n"
+        "📌 Выглядит как число: `12345678`",
         get_cancel_kb()
     )
     return "LOGIN_API_ID"
@@ -576,7 +728,13 @@ async def login_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["api_id"] = int(val)
     await send_menu_photo(
         update, PHOTO_AUTH,
-        "🔑 *Шаг 4 из 4*\n\nВведите ваш *API HASH*:",
+        "🔑 *Авторизация — Шаг 4 из 4*\n\n"
+        "Введи свой *API Hash* — секретный ключ приложения Telegram.\n\n"
+        "Где найти:\n"
+        "➡️ Тот же раздел на my.telegram.org\n"
+        "Поле *App api_hash*\n\n"
+        "📌 Выглядит так: `a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6`\n\n"
+        "🔒 Ключ хранится только на сервере и нужен исключительно для создания сессии.",
         get_cancel_kb()
     )
     return "LOGIN_API_HASH"
@@ -606,7 +764,10 @@ async def login_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["pin_entered"] = ""
         await send_menu_photo(
             update, PHOTO_AUTH,
-            "📩 *Код отправлен* в приложение Telegram.\n\nВведите его через пин-пад ниже 👇",
+            "📩 *Код подтверждения отправлен!*\n\n"
+            "Telegram прислал тебе код в приложение или в SMS.\n\n"
+            "👇 Введи его с помощью пин-пада ниже.\n"
+            "Код действителен несколько минут — не затягивай!",
             get_pinpad_kb("")
         )
         return "WAIT_CODE"
@@ -703,8 +864,14 @@ async def _finish_auth(update, context, tg_id: str, client):
     load_user_modules(client, tg_id)
 
     msg = update.callback_query.message if update.callback_query else update.message
+    nick = context.user_data.get("reg_nick", f"User")
     await msg.reply_text(
-        "🎉 *Успешно!* Юзербот запущен в облаке.",
+        f"🎉 *Добро пожаловать, {nick}!*\n\n"
+        "Твой юзербот успешно запущен в облаке.\n\n"
+        "⚡️ Сессия Telethon активна\n"
+        "🧩 Модули готовы к установке\n"
+        "🤖 Соня ждёт твоих команд\n\n"
+        "Используй меню ниже для управления:",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=get_user_kb()
     )
@@ -729,8 +896,10 @@ async def _do_sign_in(update, context, tg_id: str, code: str):
         await send_menu_photo(
             query, PHOTO_AUTH,
             "🔐 *Двухфакторная аутентификация*\n\n"
-            "На вашем аккаунте включена 2FA.\n"
-            "Введите облачный пароль Telegram:",
+            "На твоём аккаунте включён облачный пароль (2FA).\n\n"
+            "Введи пароль который ты задал в настройках Telegram:\n"
+            "*Настройки → Конфиденциальность → Облачный пароль*\n\n"
+            "🔒 Пароль передаётся напрямую в Telegram и не сохраняется на сервере.",
             get_cancel_kb()
         )
         return "WAIT_2FA"
@@ -1148,6 +1317,10 @@ def main():
             "ADMIN_LOGIN": [
                 CallbackQueryHandler(menu_router),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin_login)
+            ],
+            "LOGIN_PHONE_EXISTING": [
+                CallbackQueryHandler(menu_router, pattern="^back_main$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, login_phone_existing)
             ],
             "ADMIN_MENU": [
                 CallbackQueryHandler(admin_router)

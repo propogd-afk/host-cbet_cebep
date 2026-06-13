@@ -33,13 +33,6 @@ PHOTO_AUTH = os.path.join(IMAGES_DIR, "auth.jpg")
 PHOTO_MODULES = os.path.join(IMAGES_DIR, "modules.jpg")
 PHOTO_SONYA_SAD = os.path.join(IMAGES_DIR, "sonya_sad.jpg")
 
-# Состояния ConversationHandler
-(
-    MENU, REG_NICK, REG_PHONE, REG_PASS, 
-    LOGIN_PHONE, LOGIN_PASS, ADMIN_LOGIN, ADMIN_MENU, 
-    WAIT_PROMO_ACTIVATE, SONYA_CHAT, MODULE_INSTALL
-) = range(11)
-
 logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(message)s",
     level=logging.INFO,
@@ -120,7 +113,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🏠 Главное меню. Добро пожаловать, *{users[tg_id]['nick']}*!", parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_kb())
     else:
         await update.message.reply_text("👋 *UserBot Manager*\n\nДля работы вам необходимо зарегистрироваться или войти.", parse_mode=ParseMode.MARKDOWN, reply_markup=get_guest_kb())
-    return MENU
+    return "MENU"
 
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -137,19 +130,19 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("🏠 Главное меню:", reply_markup=get_user_kb())
         else:
             await query.message.reply_text("🏠 Меню гостя:", reply_markup=get_guest_kb())
-        return MENU
+        return "MENU"
 
     if data == "g_reg":
         await query.message.reply_text("📝 *Регистрация.*\n\nВведите ваш никнейм:", parse_mode=ParseMode.MARKDOWN, reply_markup=get_cancel_kb())
-        return REG_NICK
+        return "REG_NICK"
         
     elif data == "g_login":
         await send_menu_photo(query, PHOTO_AUTH, "🔑 *Вход.*\n\nВведите ваш номер телефона:", get_cancel_kb())
-        return LOGIN_PHONE
+        return "LOGIN_PHONE"
         
     elif data == "g_admin":
         await query.message.reply_text("👑 Введите пароль администратора:", reply_markup=get_cancel_kb())
-        return ADMIN_LOGIN
+        return "ADMIN_LOGIN"
         
     elif data == "u_logout":
         async with _file_lock:
@@ -158,13 +151,13 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 users[tg_id]["authenticated"] = False
                 save_json(USERS_FILE, users)
         await query.message.reply_text("❌ Вы успешно вышли из аккаунта.", reply_markup=get_guest_kb())
-        return MENU
+        return "MENU"
         
     elif data == "u_profile":
         u = users[tg_id]
         txt = f"👤 *Ваш профиль*\n\n🆔 ID: `{tg_id}`\n🏷 Никнейм: `{u['nick']}`\n📱 Телефон: `{u['phone']}`"
         await query.message.reply_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=get_cancel_kb())
-        return MENU
+        return "MENU"
         
     elif data == "u_sub":
         async with _file_lock: subs = load_json(SUBS_FILE)
@@ -172,15 +165,15 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = f"💎 *Управление подпиской*\n\nТекущий уровень: *Тир {tier}*\nДоступные слоты модулей: `5` базовых."
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎟 Активировать код", callback_data="u_activate_promo")], [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]])
         await query.message.reply_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
-        return MENU
+        return "MENU"
 
     elif data == "u_activate_promo":
         await query.message.reply_text("🎟 Отправьте промокод в чат:", reply_markup=get_cancel_kb())
-        return WAIT_PROMO_ACTIVATE
+        return "WAIT_PROMO_ACTIVATE"
 
     elif data == "u_sonya":
         await send_menu_photo(query, PHOTO_SONYA_SAD, "🤖 *Соня (ИИ-ассистент)*\n\n«Соня сейчас отдыхает, напишите позже!»", get_cancel_kb())
-        return SONYA_CHAT
+        return "SONYA_CHAT"
 
     elif data == "u_modules":
         m_file = os.path.join(DATA_DIR, f"user_modules_{tg_id}.json")
@@ -189,13 +182,13 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = f"⚙️ *Управление модулями*\n\n📊 Занято слотов на хостинге: `{used}/5`"
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("➕ Установить модуль (.py)", callback_data="mod_install_link")], [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]])
         await send_menu_photo(query, PHOTO_MODULES, txt, kb)
-        return MENU
+        return "MENU"
 
     elif data == "mod_install_link":
         await query.message.reply_text("🔗 Отправьте прямую ссылку на GitHub RAW или **прикрепите файл `.py` документом** сюда:", reply_markup=get_cancel_kb())
-        return MODULE_INSTALL
+        return "MODULE_INSTALL"
 
-    return MENU
+    return "MENU"
 
 # ─────────────────────────────────────────────
 # РЕГИСТРАЦИЯ И АВТОРИЗАЦИЯ
@@ -204,22 +197,22 @@ async def reg_nick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nick = update.message.text.strip()
     if len(nick) < 3:
         await update.message.reply_text("⚠️ Ник слишком короткий. Придумайте другой:")
-        return REG_NICK
+        return "REG_NICK"
         
     async with _file_lock: users = load_json(USERS_FILE)
     for u_data in users.values():
         if u_data.get("nick", "").lower() == nick.lower():
             await update.message.reply_text("❌ Этот никнейм уже занят! Придумайте другой:", reply_markup=get_cancel_kb())
-            return REG_NICK
+            return "REG_NICK"
 
     context.user_data["reg_nick"] = nick
     await update.message.reply_text("📱 Введите телефон в формате +79123456789:", reply_markup=get_cancel_kb())
-    return REG_PHONE
+    return "REG_PHONE"
 
 async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["reg_phone"] = update.message.text.strip()
     await update.message.reply_text("🔒 Создайте надежный пароль:", reply_markup=get_cancel_kb())
-    return REG_PASS
+    return "REG_PASS"
 
 async def reg_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text.strip()
@@ -232,12 +225,12 @@ async def reg_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         save_json(USERS_FILE, users)
     await update.message.reply_text("🎉 Регистрация успешна! Теперь выберите 'Вход' в главном меню.", reply_markup=get_guest_kb())
-    return MENU
+    return "MENU"
 
 async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["login_phone"] = update.message.text.strip()
     await update.message.reply_text("🔒 Введите ваш пароль:", reply_markup=get_cancel_kb())
-    return LOGIN_PASS
+    return "LOGIN_PASS"
 
 async def login_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text.strip()
@@ -257,7 +250,7 @@ async def login_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ Вход успешно выполнен!", reply_markup=get_user_kb())
         else:
             await update.message.reply_text("❌ Неверный телефон или пароль.", reply_markup=get_guest_kb())
-    return MENU
+    return "MENU"
 
 # ─────────────────────────────────────────────
 # ПРИЕМ И СОХРАНЕНИЕ МОДУЛЕЙ
@@ -271,11 +264,10 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
         doc = update.message.document
         if not doc.file_name.endswith('.py'):
             await update.message.reply_text("❌ Бот принимает только файлы с расширением `.py`")
-            return MENU
+            return "MENU"
         mod_name = doc.file_name.replace('.py', '')
         tg_file = await context.bot.get_file(doc.file_id)
         
-        # Исправлено скачивание bytearray под PTB 20.x
         data_bytes = await tg_file.download_as_bytearray()
         code_text = data_bytes.decode('utf-8', errors='ignore')
 
@@ -283,7 +275,7 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
         url = update.message.text.strip()
         if not url.startswith("http"):
             await update.message.reply_text("❌ Неверный формат ссылки. Отправьте файл или URL.")
-            return MENU
+            return "MENU"
         await update.message.reply_text("⏳ Загрузка скрипта плагина с удаленного хоста...")
         try:
             async with aiohttp.ClientSession() as session:
@@ -295,7 +287,7 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
 
     if not code_text:
         await update.message.reply_text("❌ Скрипт пуст или недоступен.", reply_markup=get_user_kb())
-        return MENU
+        return "MENU"
 
     user_dir = os.path.join(MODULES_DIR, f"user_{tg_id}")
     os.makedirs(user_dir, exist_ok=True)
@@ -310,7 +302,7 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
         save_json(m_file, m_data)
 
     await update.message.reply_text(f"✅ Модуль *{mod_name}.py* успешно скомпилирован виртуальным окружением среды и запущен на вашем юзерботе!", parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_kb())
-    return MENU
+    return "MENU"
 
 # ─────────────────────────────────────────────
 # АДМИН-ПАНЕЛЬ
@@ -318,13 +310,13 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
 async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() != ADMIN_PASSWORD:
         await update.message.reply_text("❌ Доступ отклонен.", reply_markup=get_guest_kb())
-        return MENU
+        return "MENU"
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("👥 Пользователи", callback_data="a_users"), InlineKeyboardButton("🎫 Промокоды", callback_data="a_promos")],
         [InlineKeyboardButton("🚪 Выйти из админки", callback_data="back_main")]
     ])
     await update.message.reply_text("👑 *Панель администратора:*", parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
-    return ADMIN_MENU
+    return "ADMIN_MENU"
 
 async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -343,7 +335,7 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 tier = subs.get(u_id, {}).get("tier", 1)
                 txt += f"• *{v.get('nick','-')}* | Тел: `{v.get('phone','-')}` | ID: `{u_id}` | Тариф: Тир-{tier}\n"
         await query.message.reply_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_admin")]]))
-        return ADMIN_MENU
+        return "ADMIN_MENU"
 
     elif data == "a_promos":
         async with _file_lock: promos = load_json(PROMO_FILE)
@@ -351,7 +343,7 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for k, v in promos.items(): 
             txt += f"• `{k}` (Тир-{v['tier']}, Осталось активаций: {v['max_uses'] - len(v.get('used_by', []))})\n"
         await query.message.reply_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_admin")]]))
-        return ADMIN_MENU
+        return "ADMIN_MENU"
 
     elif data == "back_admin":
         kb = InlineKeyboardMarkup([
@@ -359,17 +351,17 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🚪 Выйти из админки", callback_data="back_main")]
         ])
         await query.message.reply_text("👑 *Панель администратора:*", parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
-        return ADMIN_MENU
+        return "ADMIN_MENU"
 
-    return MENU
+    return "MENU"
 
 async def sonya_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Соня сейчас не на связи. Вернитесь в меню кнопкой ниже.", reply_markup=get_cancel_kb())
-    return SONYA_CHAT
+    return "SONYA_CHAT"
 
 async def promo_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Промокод успешно применен к вашему аккаунту!", reply_markup=get_user_kb())
-    return MENU
+    return "MENU"
 
 # ─────────────────────────────────────────────
 # ЗАПУСК
@@ -381,24 +373,24 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", cmd_start)],
         states={
-            MENU: [CallbackQueryHandler(menu_router)],
-            REG_NICK: [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_nick)],
-            REG_PHONE: [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_phone)],
-            REG_PASS: [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_pass)],
-            LOGIN_PHONE: [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_phone)],
-            LOGIN_PASS: [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_pass)],
-            ADMIN_LOGIN: [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, admin_login)],
-            ADMIN_MENU: [CallbackQueryHandler(admin_router)],
-            WAIT_PROMO_ACTIVATE: [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, promo_activate)],
-            SONYA_CHAT: [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, sonya_chat)],
-            MODULE_INSTALL: [CallbackQueryHandler(menu_router), MessageHandler(filters.Document.ALL | filters.TEXT & ~filters.COMMAND, module_download_handler)]
+            "MENU": [CallbackQueryHandler(menu_router)],
+            "REG_NICK": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_nick)],
+            "REG_PHONE": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_phone)],
+            "REG_PASS": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_pass)],
+            "LOGIN_PHONE": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_phone)],
+            "LOGIN_PASS": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_pass)],
+            "ADMIN_LOGIN": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, admin_login)],
+            "ADMIN_MENU": [CallbackQueryHandler(admin_router)],
+            "WAIT_PROMO_ACTIVATE": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, promo_activate)],
+            "SONYA_CHAT": [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, sonya_chat)],
+            "MODULE_INSTALL": [CallbackQueryHandler(menu_router), MessageHandler(filters.Document.ALL | filters.TEXT & ~filters.COMMAND, module_download_handler)]
         },
         fallbacks=[CommandHandler("start", cmd_start), CallbackQueryHandler(menu_router)],
         per_message=False
     )
 
     app.add_handler(conv_handler)
-    logger.info("Бот успешно запущен на стабильной архитектуре!")
+    logger.info("Бот успешно запущен на стабильной строковой архитектуре!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":

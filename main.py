@@ -35,9 +35,14 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 SUBS_FILE  = os.path.join(DATA_DIR, "subscriptions.json")
 PROMO_FILE = os.path.join(DATA_DIR, "promocodes.json")
 
-PHOTO_AUTH     = os.path.join(IMAGES_DIR, "auth.jpg")
-PHOTO_MODULES  = os.path.join(IMAGES_DIR, "modules.jpg")
-PHOTO_SONYA_SAD= os.path.join(IMAGES_DIR, "sonya_sad.jpg")
+# Пути к картинкам (в постоянном хранилище)
+IMAGES_DATA_DIR = os.path.join(DATA_DIR, "images")
+PHOTO_AUTH      = os.path.join(IMAGES_DATA_DIR, "auth.jpg")
+PHOTO_MODULES   = os.path.join(IMAGES_DATA_DIR, "modules.jpg")
+PHOTO_SONYA_SAD = os.path.join(IMAGES_DATA_DIR, "sonya_sad.jpg")
+
+# file_id кэш — заполняется через /setimages
+PHOTO_IDS_FILE  = os.path.join(DATA_DIR, "photo_ids.json")
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(message)s",
@@ -89,11 +94,11 @@ def init_system():
         save_json(PROMO_FILE, {
             "URETRACOIN": {"tier": 3, "days": 90, "max_uses": 100, "used_by": []}
         })
-    # Проверяем наличие картинок
-    for img in ("auth.jpg", "modules.jpg", "sonya_sad.jpg"):
-        img_path = os.path.join(IMAGES_DIR, img)
-        if not os.path.exists(img_path):
-            logger.warning(f"Картинка отсутствует: {img_path}")
+    # Создаём папку для картинок в постоянном хранилище
+    os.makedirs(IMAGES_DATA_DIR, exist_ok=True)
+    if not os.path.exists(PHOTO_IDS_FILE):
+        save_json(PHOTO_IDS_FILE, {})
+        logger.info("Картинки не загружены. Используй /setimages для загрузки.")
 
 def is_user_authorized(tg_id: str) -> bool:
     users = load_json(USERS_FILE)
@@ -217,6 +222,10 @@ def get_pinpad_kb(entered: str = "") -> InlineKeyboardMarkup:
     ])
     return InlineKeyboardMarkup(rows)
 
+def _get_photo_key(photo_path: str) -> str:
+    """Возвращает ключ для photo_ids.json по имени файла."""
+    return os.path.basename(photo_path).replace(".jpg", "")
+
 async def send_menu_photo(
     update_or_query,
     photo_path: str,
@@ -228,18 +237,43 @@ async def send_menu_photo(
         if isinstance(update_or_query, Update)
         else update_or_query.message
     )
+
+    # 1. Пробуем file_id из кэша (самый быстрый способ)
+    photo_ids = load_json(PHOTO_IDS_FILE)
+    key = _get_photo_key(photo_path)
+    file_id = photo_ids.get(key)
+
+    if file_id:
+        try:
+            await msg.reply_photo(
+                photo=file_id,
+                caption=caption_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            return
+        except Exception as e:
+            logger.warning(f"file_id устарел для {key}, пробуем файл: {e}")
+
+    # 2. Пробуем файл с диска (если вдруг есть)
     if os.path.exists(photo_path):
         try:
             with open(photo_path, "rb") as photo:
-                await msg.reply_photo(
+                sent = await msg.reply_photo(
                     photo=photo,
                     caption=caption_text,
                     parse_mode=ParseMode.MARKDOWN,
                     reply_markup=reply_markup
                 )
+                # Сохраняем file_id для будущих вызовов
+                new_file_id = sent.photo[-1].file_id
+                photo_ids[key] = new_file_id
+                save_json(PHOTO_IDS_FILE, photo_ids)
                 return
         except Exception as e:
-            logger.error(f"Ошибка отправки медиа {photo_path}: {e}")
+            logger.error(f"Ошибка отправки файла {photo_path}: {e}")
+
+    # 3. Fallback — просто текст
     await msg.reply_text(caption_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 
@@ -847,6 +881,70 @@ async def sonya_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return "SONYA_CHAT"
 
 
+# ─── /setimages: Загрузка картинок через Telegram (только для админа) ──
+
+async def cmd_set_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Команда /setimages — запускает режим загрузки картинок.
+    Отправь боту 3 фото в правильном порядке:
+    1. auth.jpg  2. modules.jpg  3. sonya_sad.jpg
+    """
+    tg_id = str(update.effective_user.id)
+    # Простая проверка — только если знаешь пароль (уже авторизован как админ через сессию)
+    context.user_data["setimages_step"] = 0
+    context.user_data["setimages_keys"] = ["auth", "modules", "sonya_sad"]
+    context.user_data["setimages_names"] = ["auth.jpg (авторизация)", "modules.jpg (модули)", "sonya_sad.jpg (Соня)"]
+    await update.message.reply_text(
+        "🖼 *Загрузка картинок*\n\n"
+        "Отправь фото по очереди:\n"
+        "1\u20e3 `auth.jpg` — экран авторизации\n"
+        "2\u20e3 `modules.jpg` — экран модулей\n"
+        "3\u20e3 `sonya_sad.jpg` — экран Сони\n\n"
+        "👉 Отправь первое фото:",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    return "SET_IMAGES"
+
+async def setimages_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Принимает фото по одному и сохраняет file_id."""
+    if not update.message.photo:
+        await update.message.reply_text("❌ Отправь именно фото (не файлом).")
+        return "SET_IMAGES"
+
+    step  = context.user_data.get("setimages_step", 0)
+    keys  = context.user_data.get("setimages_keys", [])
+    names = context.user_data.get("setimages_names", [])
+
+    if step >= len(keys):
+        await update.message.reply_text("✅ Все картинки уже загружены!")
+        return "MENU"
+
+    file_id = update.message.photo[-1].file_id
+    photo_ids = load_json(PHOTO_IDS_FILE)
+    photo_ids[keys[step]] = file_id
+    save_json(PHOTO_IDS_FILE, photo_ids)
+    logger.info(f"Сохранён file_id для {keys[step]}: {file_id}")
+
+    step += 1
+    context.user_data["setimages_step"] = step
+
+    if step < len(keys):
+        await update.message.reply_text(
+            f"\u2705 *{names[step-1]}* сохранена!\n\n"
+            f"\U0001f449 Теперь отправь *{names[step]}*:",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return "SET_IMAGES"
+    else:
+        await update.message.reply_text(
+            "\U0001f389 *Все картинки успешно загружены!*\n\n"
+            "Теперь бот будет показывать их при каждом соответствующем экране.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_user_kb() if is_user_authorized(str(update.effective_user.id)) else get_guest_kb()
+        )
+        return "MENU"
+
+
 # ─── WAIT_PROMO_ACTIVATE: Ввод и валидация купонов ────────────────
 
 async def promo_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -999,7 +1097,10 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
 
     conv = ConversationHandler(
-        entry_points=[CommandHandler("start", cmd_start)],
+        entry_points=[
+            CommandHandler("start", cmd_start),
+            CommandHandler("setimages", cmd_set_images),
+        ],
         states={
             "MENU": [
                 CallbackQueryHandler(menu_router)
@@ -1050,6 +1151,12 @@ def main():
             ],
             "ADMIN_MENU": [
                 CallbackQueryHandler(admin_router)
+            ],
+            "SET_IMAGES": [
+                CommandHandler("start", cmd_start),
+                MessageHandler(filters.PHOTO, setimages_handler),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, 
+                    lambda u, c: u.message.reply_text("❌ Отправь фото, не текст.") or "SET_IMAGES")
             ],
         },
         fallbacks=[

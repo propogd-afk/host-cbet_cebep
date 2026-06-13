@@ -581,7 +581,8 @@ async def admin_generate_promo(update: Update, context: ContextTypes.DEFAULT_TYP
         tier, days, max_uses = map(int, update.message.text.strip().split())
         import random, string
         rnd = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        code = f"{{2:'BASIC_', 3:'PREMIUM_', 4:'VIP_'}[tier]}{rnd}"
+        prefixes = {2: 'BASIC_', 3: 'PREMIUM_', 4: 'VIP_'}
+        code = f"{prefixes[tier]}{rnd}"
         
         async with _file_lock:
             promos = load_json(PROMO_FILE)

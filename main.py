@@ -1,12 +1,12 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters, ContextTypes
+# Используем синтаксис v13 (Updater, Dispatcher вместо Application)
+from telegram.ext import Updater, CallbackQueryHandler, CommandHandler, MessageHandler, Filters, CallbackContext
 import json
 import os
 import random
 import string
 import importlib.util
 import sys
-import asyncio
 from datetime import datetime, timedelta
 
 # Импортируем Telethon для работы с сессиями
@@ -30,7 +30,6 @@ TIERS = {
 }
 
 user_states = {} 
-DYNAMIC_HANDLERS = {}
 
 # Вспомогательные функции для БД
 def load_file(filename):
@@ -76,25 +75,25 @@ def get_number_keyboard(current_code=""):
 
 # ===== ИНИЦИАЛИЗАЦИЯ И ХЕНДЛЕРЫ БОТА =====
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     if not update.message: return
     tg_id = update.effective_user.id
     phone, user_data = get_user_by_tg_id(tg_id)
     if tg_id in user_states: del user_states[tg_id]
         
     if user_data:
-        await show_main_menu(update, context, user_data, is_callback=False)
+        show_main_menu(update, context, user_data, is_callback=False)
     else:
         keyboard = [
             [InlineKeyboardButton("📝 Регистрация", callback_data="auth_reg")],
             [InlineKeyboardButton("🔑 Вход", callback_data="auth_login")]
         ]
-        await update.message.reply_text(
+        update.message.reply_text(
             "👋 Добро пожаловать в Хостинг Юзерботов Hikka!\n\nЗарегистрируйтесь, чтобы создать свой процесс юзербота:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data, is_callback=True):
+def show_main_menu(update: Update, context: CallbackContext, user_data, is_callback=True):
     tg_id = update.effective_user.id
     sub = get_sub(tg_id)
     phone, _ = get_user_by_tg_id(tg_id)
@@ -115,49 +114,49 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, use
         [InlineKeyboardButton("❌ Отключить юзербота", callback_data="reset_api") if session_exists else InlineKeyboardButton("🚀 Авторизовать / Запустить", callback_data="start_ub_auth")],
         [InlineKeyboardButton("❌ Выйти из панели", callback_data="menu_logout")]
     ]
-    if is_callback: await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    else: await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    if is_callback: update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    else: update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 # ===== ОБРАБОТКА НАЖАТИЙ КНОПОК =====
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     tg_id = query.from_user.id
     data = query.data
     phone, user_data = get_user_by_tg_id(tg_id)
     
     if data == "auth_reg":
         user_states[tg_id] = {"state": "REG_NICK", "data": {}}
-        await query.edit_message_text("📝 <b>Регистрация</b>\n\nПридумай публичный ник:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="to_welcome")]]), parse_mode="HTML")
+        query.edit_message_text("📝 <b>Регистрация</b>\n\nПридумай публичный ник:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="to_welcome")]]), parse_mode="HTML")
     elif data == "auth_login":
         user_states[tg_id] = {"state": "LOGIN_PHONE", "data": {}}
-        await query.edit_message_text("🔑 <b>Вход</b>\n\nВведи номер телефона (+79123456789):", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="to_welcome")]]), parse_mode="HTML")
+        query.edit_message_text("🔑 <b>Вход</b>\n\nВведи номер телефона (+79123456789):", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="to_welcome")]]), parse_mode="HTML")
     elif data == "to_welcome":
         if tg_id in user_states: del user_states[tg_id]
-        await query.edit_message_text("👋 Добро пожаловать!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📝 Регистрация", callback_data="auth_reg")], [InlineKeyboardButton("🔑 Вход", callback_data="auth_login")]]))
+        query.edit_message_text("👋 Добро пожаловать!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📝 Регистрация", callback_data="auth_reg")], [InlineKeyboardButton("🔑 Вход", callback_data="auth_login")]]))
     elif data == "to_main_menu":
         if tg_id in user_states: del user_states[tg_id]
-        if user_data: await show_main_menu(update, context, user_data, is_callback=True)
+        if user_data: show_main_menu(update, context, user_data, is_callback=True)
     elif data == "menu_profile":
         if not user_data: return
         sub = get_sub(tg_id)
         has_session = "✅ Активна" if os.path.exists(os.path.join(get_user_modules_dir(tg_id), str(phone) + ".session")) else "❌ Отсутствует"
         text = "👤 <b>Личный кабинет</b>\n\n<b>Ник:</b> " + str(user_data['nick']) + "\n<b>Телефон:</b> " + str(phone) + "\n<b>Сессия на сервере:</b> " + has_session
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="to_main_menu")]]), parse_mode="HTML")
+        query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="to_main_menu")]]), parse_mode="HTML")
     elif data == "menu_modules":
-        await query.edit_message_text("⚙️ <b>Управление модулями</b>\n\nВ данный момент нет доступных модулей для установки.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="to_main_menu")]]), parse_mode="HTML")
+        query.edit_message_text("⚙️ <b>Управление модулями</b>\n\nВ данный момент нет доступных модулей для установки.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="to_main_menu")]]), parse_mode="HTML")
     elif data == "menu_logout":
         if phone:
             users = load_file(USERS_FILE)
             if phone in users:
                 users[phone]["telegram_id"] = None
                 save_file(USERS_FILE, users)
-        await query.edit_message_text("❌ Вы вышли из панели.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ На главную", callback_data="to_welcome")]]))
+        query.edit_message_text("❌ Вы вышли из панели.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ На главную", callback_data="to_welcome")]]))
     
     elif data == "start_ub_auth":
         user_states[tg_id] = {"state": "REG_API_ID", "data": {"phone": phone, "nick": user_data["nick"], "password": user_data["password"]}}
-        await query.edit_message_text("⚙️ <b>Настройка сессии Telethon</b>\n\nВведите ваш <b>api_id</b> с сайта my.telegram.org (или 'пропустить'):", parse_mode="HTML")
+        query.edit_message_text("⚙️ <b>Настройка сессии Telethon</b>\n\nВведите ваш <b>api_id</b> с сайта my.telegram.org (или 'пропустить'):", parse_mode="HTML")
 
     elif data == "reset_api":
         if phone:
@@ -171,7 +170,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 users[phone]["api_id"] = None
                 users[phone]["api_hash"] = None
                 save_file(USERS_FILE, users)
-        await query.edit_message_text("🛑 Юзербот остановлен, сессия удалена с сервера.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ В меню", callback_data="to_main_menu")]]))
+        query.edit_message_text("🛑 Юзербот остановлен, сессия удалена с сервера.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ В меню", callback_data="to_main_menu")]]))
 
     # --- ИНЛАЙН КНОПКИ КОДА ---
     elif data.startswith("num_"):
@@ -186,27 +185,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if action == "clear":
             user_states[tg_id]["code_buffer"] = ""
             text, reply_markup = get_number_keyboard(user_states[tg_id]["code_buffer"])
-            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="HTML")
+            query.edit_message_text(text, reply_markup=reply_markup, parse_mode="HTML")
             
         elif action == "submit":
             code = user_states[tg_id]["code_buffer"]
             if len(code) != 5:
                 text, reply_markup = get_number_keyboard(code)
-                await query.edit_message_text(text + "\n\n⚠️ <i>Код должен состоять из 5 цифр!</i>", reply_markup=reply_markup, parse_mode="HTML")
+                query.edit_message_text(text + "\n\n⚠️ <i>Код должен состоять из 5 цифр!</i>", reply_markup=reply_markup, parse_mode="HTML")
                 return
                 
-            await query.edit_message_text("⏳ Проверяю введенный код...")
-            await process_tg_code(query.message, context, tg_id, code)
+            query.edit_message_text("⏳ Проверяю введенный код...")
+            process_tg_code(query.message, context, tg_id, code)
             
         else:
             if len(user_states[tg_id]["code_buffer"]) < 5:
                 user_states[tg_id]["code_buffer"] += action
             text, reply_markup = get_number_keyboard(user_states[tg_id]["code_buffer"])
-            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="HTML")
+            query.edit_message_text(text, reply_markup=reply_markup, parse_mode="HTML")
 
 # ===== ОБРАБОТКА ВВОДА ТЕКСТА =====
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def handle_text(update: Update, context: CallbackContext):
     if not update.message: return
     tg_id = update.effective_user.id
     text = update.message.text.strip()
@@ -222,33 +221,33 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if 3 <= len(text) <= 32:
                 user_states[tg_id]["data"]["nick"] = text
                 user_states[tg_id]["state"] = "REG_PHONE"
-                await update.message.reply_text("Введи номер телефона аккаунта Telegram (+79123456789):")
+                update.message.reply_text("Введи номер телефона аккаунта Telegram (+79123456789):")
             else:
-                await update.message.reply_text("❌ Ник должен быть от 3 до 32 символов!")
+                update.message.reply_text("❌ Ник должен быть от 3 до 32 символов!")
                 
         elif state == "REG_PHONE":
             if not text.startswith("+") or not text[1:].isdigit():
-                await update.message.reply_text("❌ Номер должен быть в международном формате, например: +79123456789")
+                update.message.reply_text("❌ Номер должен быть в международном формате, например: +79123456789")
                 return
             user_states[tg_id]["data"]["phone"] = text
             user_states[tg_id]["state"] = "REG_PASS"
-            await update.message.reply_text("Придумай пароль для входа в панель бота:")
+            update.message.reply_text("Придумай пароль для входа в панель бота:")
             
         elif state == "REG_PASS":
             user_states[tg_id]["data"]["password"] = text
             user_states[tg_id]["state"] = "REG_API_ID"
-            await update.message.reply_text("⚙️ <b>Регистрация профиля успешна!</b>\n\nТеперь настроим юзербота.\nВведите ваш <b>api_id</b> (или напишите 'пропустить'):", parse_mode="HTML")
+            update.message.reply_text("⚙️ <b>Регистрация профиля успешна!</b>\n\nТеперь настроим юзербота.\nВведите ваш <b>api_id</b> (или напишите 'пропустить'):", parse_mode="HTML")
             
         elif state == "REG_API_ID":
             if is_skip:
-                await finalize_registration(update, context, skip_ub=True)
+                finalize_registration(update, context, skip_ub=True)
             else:
                 if not text.isdigit():
-                    await update.message.reply_text("❌ api_id должен состоять только из цифр:")
+                    update.message.reply_text("❌ api_id должен состоять только из цифр:")
                     return
                 user_states[tg_id]["data"]["api_id"] = text
                 user_states[tg_id]["state"] = "REG_API_HASH"
-                await update.message.reply_text("✅ api_id принят. Теперь введите ваш <b>api_hash</b>:", parse_mode="HTML")
+                update.message.reply_text("✅ api_id принят. Теперь введите ваш <b>api_hash</b>:", parse_mode="HTML")
                 
         elif state == "REG_API_HASH":
             user_states[tg_id]["data"]["api_hash"] = text
@@ -256,48 +255,55 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             u_dir = get_user_modules_dir(tg_id)
             sess_path = os.path.join(u_dir, u_phone)
             
-            await update.message.reply_text("⏳ Подключаюсь к серверам Telegram для отправки СМС-кода...")
+            update.message.reply_text("⏳ Подключаюсь к серверам Telegram для отправки СМС-кода...")
             
             try:
-                client = TelegramClient(sess_path, int(user_states[tg_id]["data"]["api_id"]), user_states[tg_id]["data"]["api_hash"])
-                await client.connect()
+                # Внутри синхронного хендлера v13 запускаем асинхронный Telethon через loop
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
                 
-                send_code_obj = await client.send_code_request(u_phone)
+                client = TelegramClient(sess_path, int(user_states[tg_id]["data"]["api_id"]), user_states[tg_id]["data"]["api_hash"])
+                loop.run_until_complete(client.connect())
+                
+                send_code_obj = loop.run_until_complete(client.send_code_request(u_phone))
                 
                 user_states[tg_id]["client"] = client
+                user_states[tg_id]["loop"] = loop
                 user_states[tg_id]["phone_code_hash"] = send_code_obj.phone_code_hash
                 user_states[tg_id]["state"] = "INPUT_TG_CODE"
                 user_states[tg_id]["code_buffer"] = ""
                 
                 text_kb, markup_kb = get_number_keyboard()
-                await update.message.reply_text(text_kb, reply_markup=markup_kb, parse_mode="HTML")
+                update.message.reply_text(text_kb, reply_markup=markup_kb, parse_mode="HTML")
                 
             except Exception as e:
-                await update.message.reply_text("❌ Ошибка Telethon: " + str(e) + "\nРегистрация завершена без юзербота.")
-                await finalize_registration(update, context, skip_ub=True)
+                update.message.reply_text("❌ Ошибка Telethon: " + str(e) + "\nРегистрация завершена без юзербота.")
+                finalize_registration(update, context, skip_ub=True)
 
         elif state == "INPUT_TG_2FA":
             client = user_states[tg_id]["client"]
+            loop = user_states[tg_id]["loop"]
             try:
-                await client.sign_in(password=text)
-                await update.message.reply_text("✅ Двухфакторный пароль принят! Юзербот успешно запущен.")
-                await client.disconnect()
-                await finalize_registration(update, context, skip_ub=False)
+                loop.run_until_complete(client.sign_in(password=text))
+                update.message.reply_text("✅ Двухфакторный пароль принят! Юзербот успешно запущен.")
+                loop.run_until_complete(client.disconnect())
+                finalize_registration(update, context, skip_ub=False)
             except PasswordHashInvalidError:
-                await update.message.reply_text("❌ Неверный облачный пароль! Попробуйте еще раз:")
+                update.message.reply_text("❌ Неверный облачный пароль! Попробуйте еще раз:")
             except Exception as e:
-                await update.message.reply_text("❌ Ошибка 2FA: " + str(e))
-                await client.disconnect()
+                update.message.reply_text("❌ Ошибка 2FA: " + str(e))
+                loop.run_until_complete(client.disconnect())
                 del user_states[tg_id]
 
         elif state == "LOGIN_PHONE":
             users = load_file(USERS_FILE)
             if text not in users:
-                await update.message.reply_text("❌ Пользователь с таким номером не найден.")
+                update.message.reply_text("❌ Пользователь с таким номером не найден.")
                 return
             user_states[tg_id]["data"]["phone"] = text
             user_states[tg_id]["state"] = "LOGIN_PASS"
-            await update.message.reply_text("🔒 Введи пароль от панели:")
+            update.message.reply_text("🔒 Введи пароль от панели:")
             
         elif state == "LOGIN_PASS":
             p = user_states[tg_id]["data"]["phone"]
@@ -306,40 +312,41 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 users[p]["telegram_id"] = tg_id
                 save_file(USERS_FILE, users)
                 del user_states[tg_id]
-                await update.message.reply_text("✅ Вход выполнен успешно!")
-                await show_main_menu(update, context, users[p], is_callback=False)
+                update.message.reply_text("✅ Вход выполнен успешно!")
+                show_main_menu(update, context, users[p], is_callback=False)
             else:
-                await update.message.reply_text("❌ Неверный пароль!")
+                update.message.reply_text("❌ Неверный пароль!")
                 
     except Exception as main_err:
-        await update.message.reply_text("💥 Ошибка: " + str(main_err))
+        update.message.reply_text("💥 Ошибка: " + str(main_err))
 
 # ===== ПРОВЕРКА КОДА ИЗ КНОПОК =====
-async def process_tg_code(message, context, tg_id, code):
+def process_tg_code(message, context, tg_id, code):
     client = user_states[tg_id]["client"]
+    loop = user_states[tg_id]["loop"]
     phone_code_hash = user_states[tg_id]["phone_code_hash"]
     u_phone = user_states[tg_id]["data"]["phone"]
     
     try:
-        await client.sign_in(phone=u_phone, code=code, phone_code_hash=phone_code_hash)
-        await message.reply_text("✅ Авторизация успешна! Сессия сохранена на сервере.")
-        await client.disconnect()
-        await finalize_registration_by_msg(message, context, tg_id, skip_ub=False)
+        loop.run_until_complete(client.sign_in(phone=u_phone, code=code, phone_code_hash=phone_code_hash))
+        message.reply_text("✅ Авторизация успешна! Сессия сохранена на сервере.")
+        loop.run_until_complete(client.disconnect())
+        finalize_registration_by_msg(message, context, tg_id, skip_ub=False)
         
     except SessionPasswordNeededError:
         user_states[tg_id]["state"] = "INPUT_TG_2FA"
-        await message.reply_text("🔒 Аккаунт защищен двухфакторной аутентификацией.\n\n<b>Введите ваш Пароль (2FA) текстом:</b>", parse_mode="HTML")
+        message.reply_text("🔒 Аккаунт защищен двухфакторной аутентификацией.\n\n<b>Введите ваш Пароль (2FA) текстом:</b>", parse_mode="HTML")
     except PhoneCodeInvalidError:
         user_states[tg_id]["code_buffer"] = "" 
         text_kb, markup_kb = get_number_keyboard()
-        await message.reply_text("❌ Неверный код! Заново:\n\n" + text_kb, reply_markup=markup_kb, parse_mode="HTML")
+        message.reply_text("❌ Неверный код! Заново:\n\n" + text_kb, reply_markup=markup_kb, parse_mode="HTML")
     except Exception as e:
-        await message.reply_text("❌ Ошибка: " + str(e))
-        await client.disconnect()
+        message.reply_text("❌ Ошибка: " + str(e))
+        loop.run_until_complete(client.disconnect())
         if tg_id in user_states: del user_states[tg_id]
 
 # ===== СОХРАНЕНИЕ ДАННЫХ =====
-async def finalize_registration_by_msg(message, context, tg_id, skip_ub=False):
+def finalize_registration_by_msg(message, context, tg_id, skip_ub=False):
     users = load_file(USERS_FILE)
     d = user_states[tg_id]["data"]
     phone = d["phone"]
@@ -355,7 +362,7 @@ async def finalize_registration_by_msg(message, context, tg_id, skip_ub=False):
     get_sub(tg_id)
     
     del user_states[tg_id]
-    await message.reply_text("🎉 Профиль сохранен в базе данных хостинга!")
+    message.reply_text("🎉 Профиль сохранен в базе данных хостинга!")
     
     subs = load_file(SUBS_FILE)
     sub = subs.get(str(tg_id), {"tier": 1, "expires": "unknown"})
@@ -375,9 +382,9 @@ async def finalize_registration_by_msg(message, context, tg_id, skip_ub=False):
         [InlineKeyboardButton("❌ Отключить юзербота", callback_data="reset_api") if session_exists else InlineKeyboardButton("🚀 Авторизовать / Запустить", callback_data="start_ub_auth")],
         [InlineKeyboardButton("❌ Выйти из панели", callback_data="menu_logout")]
     ]
-    await message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
-async def finalize_registration(update: Update, context: ContextTypes.DEFAULT_TYPE, skip_ub=False):
+def finalize_registration(update: Update, context: CallbackContext, skip_ub=False):
     tg_id = update.effective_user.id
     users = load_file(USERS_FILE)
     d = user_states[tg_id]["data"]
@@ -394,17 +401,22 @@ async def finalize_registration(update: Update, context: ContextTypes.DEFAULT_TY
     get_sub(tg_id)
     
     del user_states[tg_id]
-    await update.message.reply_text("🎉 Профиль сохранен в базе данных хостинга!")
-    await show_main_menu(update, context, users[phone], is_callback=False)
+    update.message.reply_text("🎉 Профиль сохранен в базе данных хостинга!")
+    show_main_menu(update, context, users[phone], is_callback=False)
 
 def main():
     os.makedirs(MODULES_DIR, exist_ok=True)
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    print("🚀 Хостинг-панель запущена!")
-    app.run_polling()
+    # Инициализация для python-telegram-bot v13
+    updater = Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
+    
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CallbackQueryHandler(button_handler))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
+    
+    print("🚀 Хостинг-панель запущена на v13!")
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == "__main__":
     main()

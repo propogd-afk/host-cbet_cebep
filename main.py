@@ -345,7 +345,7 @@ def _unp_format(batch: list, idx: int, total: int) -> str:
     lines = [f"✅ Юзернеймы (батч {idx+1}/{total}):\n"]
     for un in batch:
         name = un.lstrip("@")
-        lines.append(f"  `{name}`")
+        lines.append(f"  `@{name}`")
     lines.append("\n📢 @userbotcbet")
     return "\n".join(lines)
 
@@ -1179,11 +1179,33 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "history": [], "current_idx": -1, "running": False,
             }
         cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
-        await send_plain(query.message, _unp_menu_text(cfg, tg_id), _unp_menu_kb(cfg, tg_id))
+        await query.message.reply_text(
+            _unp_menu_text(cfg, tg_id),
+            reply_markup=_unp_menu_kb(cfg, tg_id),
+            disable_web_page_preview=True
+        )
         return "UNPARSER"
         return "UNPARSER"
 
     if data == "unp_noop":
+        return "UNPARSER"
+
+    if data == "unp_settings":
+        if tg_id not in UNPARSER_SESSIONS:
+            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5, "mode": "random"}, "history": [], "current_idx": -1, "running": False}
+        cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
+        try:
+            await query.message.edit_text(
+                _unp_menu_text(cfg, tg_id),
+                reply_markup=_unp_menu_kb(cfg, tg_id),
+                disable_web_page_preview=True
+            )
+        except Exception:
+            await query.message.reply_text(
+                _unp_menu_text(cfg, tg_id),
+                reply_markup=_unp_menu_kb(cfg, tg_id),
+                disable_web_page_preview=True
+            )
         return "UNPARSER"
 
     if data == "unp_info":
@@ -1224,11 +1246,19 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("👑 Только для Pro подписки!", show_alert=True)
                 return "UNPARSER"
             cfg["mode"] = "pretty"
-        # Обновляем существующее сообщение вместо отправки нового
+        # Обновляем кнопки и текст
         try:
-            await query.message.edit_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id))
+            await query.message.edit_text(
+                _unp_menu_text(cfg, tg_id),
+                reply_markup=_unp_menu_kb(cfg, tg_id),
+                disable_web_page_preview=True
+            )
         except Exception:
-            await query.message.reply_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id))
+            await query.message.reply_text(
+                _unp_menu_text(cfg, tg_id),
+                reply_markup=_unp_menu_kb(cfg, tg_id),
+                disable_web_page_preview=True
+            )
         return "UNPARSER"
     if data == "unp_generate":
         if tg_id not in UNPARSER_SESSIONS:

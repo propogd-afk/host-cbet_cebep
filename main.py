@@ -66,6 +66,7 @@ _file_lock = asyncio.Lock()
 USER_BOTS: dict      = {}
 LOADED_MODULES: dict = {}
 MIRROR_APPS: dict    = {}  # {partner_tg_id: Application} — запущенные зеркала
+UNPARSER_SESSIONS: dict = {}  # {tg_id: {cfg, history, current_idx}}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -247,6 +248,102 @@ async def auto_run_existing_bots():
 # 🎛 БЛОК UI: КЛАВИАТУРЫ И МЕНЮ
 # ═══════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════
+# 🔍 ПАРСЕР ЮЗЕРНЕЙМОВ
+# ═══════════════════════════════════════════════════════════════════
+
+import random as _random
+import string as _string
+
+def _unp_gen(length: int, digits: bool) -> str:
+    chars = _string.ascii_lowercase + (_string.digits if digits else "")
+    first = _random.choice(_string.ascii_lowercase)
+    rest  = ''.join(_random.choices(chars, k=length - 1))
+    return first + rest
+
+def _unp_menu_text(cfg: dict) -> str:
+    return (
+        "🔍 Парсер юзернеймов\n\n"
+        f"📏 Длина: {cfg.get('length', 8)} символов\n"
+        f"🔢 Цифры: {'✅ Да' if cfg.get('digits', True) else '❌ Нет'}\n"
+        f"📦 Количество: {cfg.get('count', 5)} штук\n\n"
+        "Нажми Генерировать чтобы начать\n\n"
+        "📢 @userbotcbet | 🤖 @cbet_controller_bot"
+    )
+
+def _unp_menu_kb(cfg: dict) -> InlineKeyboardMarkup:
+    digits_label = "🔢 Цифры: ✅" if cfg.get("digits", True) else "🔢 Цифры: ❌"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➖", callback_data="unp_len_minus"),
+         InlineKeyboardButton(f"📏 {cfg.get('length', 8)}", callback_data="unp_noop"),
+         InlineKeyboardButton("➕", callback_data="unp_len_plus")],
+        [InlineKeyboardButton(digits_label, callback_data="unp_digits")],
+        [InlineKeyboardButton("➖", callback_data="unp_count_minus"),
+         InlineKeyboardButton(f"📦 {cfg.get('count', 5)} шт.", callback_data="unp_noop"),
+         InlineKeyboardButton("➕", callback_data="unp_count_plus")],
+        [InlineKeyboardButton("🔍 Генерировать", callback_data="unp_generate")],
+        [InlineKeyboardButton("◀️ Назад в меню", callback_data="back_main")],
+    ])
+
+def _unp_result_kb(sess: dict) -> InlineKeyboardMarkup:
+    has_prev = sess.get("current_idx", 0) > 0
+    rows = []
+    nav  = []
+    if has_prev:
+        nav.append(InlineKeyboardButton("◀️ Вернуться", callback_data="unp_prev"))
+    nav.append(InlineKeyboardButton("▶️ Вперёд", callback_data="unp_next"))
+    rows.append(nav)
+    rows.append([
+        InlineKeyboardButton("⚙️ Настройки", callback_data="unp_settings"),
+        InlineKeyboardButton("◀️ В меню",    callback_data="back_main"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+def _unp_format(batch: list, idx: int, total: int) -> str:
+    if not batch:
+        return "😔 Не нашли свободных юзернеймов. Попробуй ещё раз.\n\n📢 @userbotcbet"
+    lines = [f"✅ Свободные юзернеймы (батч {idx+1}/{total}):\n"]
+    for un in batch:
+        lines.append(f"  {un}")
+    lines.append("\n📢 @userbotcbet | 🤖 @cbet_controller_bot")
+    return "\n".join(lines)
+
+async def _unp_check(bot_client, username: str) -> bool:
+    """Проверяет юзернейм через Telethon."""
+    try:
+        from telethon.tl.functions.account import CheckUsernameRequest
+        result = await bot_client(CheckUsernameRequest(username))
+        return bool(result)
+    except Exception:
+        return False
+
+async def _unp_generate(tg_id: str, cfg: dict) -> list:
+    """Генерирует батч свободных юзернеймов через юзербот."""
+    from main import USER_BOTS  # noqa
+    client = USER_BOTS.get(tg_id)
+    length = max(5, min(32, cfg.get("length", 8)))
+    digits = cfg.get("digits", True)
+    count  = cfg.get("count", 5)
+    results   = []
+    attempts  = 0
+    max_att   = count * 15
+
+    while len(results) < count and attempts < max_att:
+        attempts += 1
+        un = _unp_gen(length, digits)
+        if len(un) < 5:
+            continue
+        if client:
+            free = await _unp_check(client, un)
+        else:
+            free = True  # если нет клиента — просто генерируем
+        if free:
+            results.append(f"@{un}")
+        await asyncio.sleep(0.2)
+
+    return results
+
+
 async def check_subscription(bot, tg_id: str) -> bool:
     """Проверяет подписку юзера на канал."""
     try:
@@ -278,7 +375,8 @@ def get_user_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton("🤖 Соня (ИИ)",       callback_data="u_sonya")],
         [InlineKeyboardButton("🔧 Системные модули", callback_data="u_sysmods"),
          InlineKeyboardButton("🎟 Ввести код",       callback_data="u_entercode")],
-        [InlineKeyboardButton("🪞 Партнёрская программа", callback_data="u_partner")],
+        [InlineKeyboardButton("🪞 Партнёрская программа", callback_data="u_partner"),
+         InlineKeyboardButton("🔍 Юзернеймы", callback_data="u_unparser")],
         [InlineKeyboardButton("❌ Выйти (сбросить сессию)", callback_data="u_logout")]
     ])
 
@@ -1044,6 +1142,89 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MENU"
 
     # ── Юзер-кнопки ──
+
+    # ── Парсер юзернеймов ──
+    if data == "u_unparser":
+        tg_id_int = int(tg_id)
+        if tg_id not in UNPARSER_SESSIONS:
+            UNPARSER_SESSIONS[tg_id] = {
+                "cfg": {"length": 8, "digits": True, "count": 5},
+                "history": [],
+                "current_idx": -1,
+                "running": False,
+            }
+        cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
+        await send_plain(query.message, _unp_menu_text(cfg), _unp_menu_kb(cfg))
+        return "UNPARSER"
+
+    if data == "unp_noop":
+        return "UNPARSER"
+
+    if data == "unp_settings":
+        if tg_id not in UNPARSER_SESSIONS:
+            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5}, "history": [], "current_idx": -1, "running": False}
+        cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
+        await query.message.reply_text(_unp_menu_text(cfg), reply_markup=_unp_menu_kb(cfg))
+        return "UNPARSER"
+
+    if data in ("unp_len_minus", "unp_len_plus", "unp_digits", "unp_count_minus", "unp_count_plus"):
+        if tg_id not in UNPARSER_SESSIONS:
+            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5}, "history": [], "current_idx": -1, "running": False}
+        cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
+        if data == "unp_len_minus":   cfg["length"] = max(5,  cfg.get("length", 8) - 1)
+        elif data == "unp_len_plus":  cfg["length"] = min(32, cfg.get("length", 8) + 1)
+        elif data == "unp_digits":    cfg["digits"] = not cfg.get("digits", True)
+        elif data == "unp_count_minus": cfg["count"] = max(1,  cfg.get("count", 5) - 1)
+        elif data == "unp_count_plus":  cfg["count"] = min(20, cfg.get("count", 5) + 1)
+        await query.message.reply_text(_unp_menu_text(cfg), reply_markup=_unp_menu_kb(cfg))
+        return "UNPARSER"
+
+    if data == "unp_generate":
+        if tg_id not in UNPARSER_SESSIONS:
+            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5}, "history": [], "current_idx": -1, "running": False}
+        sess = UNPARSER_SESSIONS[tg_id]
+        if sess.get("running"):
+            await query.answer("⏳ Уже генерирую...", show_alert=True)
+            return "UNPARSER"
+        sess["running"] = True
+        await query.message.reply_text("⏳ Генерирую и проверяю юзернеймы...", reply_markup=None)
+        batch = await _unp_generate(tg_id, sess["cfg"])
+        sess["running"] = False
+        sess["history"].append(batch)
+        sess["current_idx"] = len(sess["history"]) - 1
+        text = _unp_format(batch, sess["current_idx"], len(sess["history"]))
+        await query.message.reply_text(text, reply_markup=_unp_result_kb(sess))
+        return "UNPARSER"
+
+    if data == "unp_next":
+        if tg_id not in UNPARSER_SESSIONS:
+            return "UNPARSER"
+        sess = UNPARSER_SESSIONS[tg_id]
+        if sess.get("running"):
+            return "UNPARSER"
+        if sess["current_idx"] < len(sess["history"]) - 1:
+            sess["current_idx"] += 1
+            batch = sess["history"][sess["current_idx"]]
+            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess))
+        else:
+            sess["running"] = True
+            await query.message.reply_text("⏳ Генерирую новый батч...", reply_markup=None)
+            batch = await _unp_generate(tg_id, sess["cfg"])
+            sess["running"] = False
+            sess["history"].append(batch)
+            sess["current_idx"] = len(sess["history"]) - 1
+            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess))
+        return "UNPARSER"
+
+    if data == "unp_prev":
+        if tg_id not in UNPARSER_SESSIONS:
+            return "UNPARSER"
+        sess = UNPARSER_SESSIONS[tg_id]
+        if sess["current_idx"] > 0:
+            sess["current_idx"] -= 1
+            batch = sess["history"][sess["current_idx"]]
+            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess))
+        return "UNPARSER"
 
     if data == "u_partner":
         mirrors   = load_mirrors()
@@ -2683,6 +2864,7 @@ def main():
             "WAIT_CODE":             [CallbackQueryHandler(pinpad_click_handler, pattern="^pin_"), CallbackQueryHandler(menu_router, pattern="^back_main$")],
             "WAIT_2FA":              [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_2fa)],
             "MODULE_INSTALL":        [CallbackQueryHandler(menu_router), MessageHandler((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
+            "UNPARSER":              [CallbackQueryHandler(menu_router)],
             "WAIT_MIRROR_TOKEN":     [CallbackQueryHandler(menu_router, pattern="^back_main$|^u_partner$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_mirror_token)],
             "WAIT_TIMENICK":         [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_timenick)],
             "SONYA_CHAT":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, sonya_chat)],

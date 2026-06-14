@@ -255,25 +255,57 @@ async def auto_run_existing_bots():
 import random as _random
 import string as _string
 
+# Красивые сочетания для Pro
+_PRETTY_PARTS = [
+    "dark", "light", "neo", "pro", "max", "ultra", "super", "hyper",
+    "fire", "ice", "star", "moon", "sun", "sky", "void", "zero",
+    "fast", "cool", "hot", "real", "true", "pure", "wild", "free",
+    "night", "day", "black", "white", "red", "blue", "gold", "neon",
+    "flash", "boost", "turbo", "mega", "epic", "omega", "alpha", "beta",
+    "cyber", "ghost", "storm", "blade", "nova", "pulse", "sonic", "apex",
+]
+
 def _unp_gen(length: int, digits: bool) -> str:
+    """Рандомный юзернейм."""
     chars = _string.ascii_lowercase + (_string.digits if digits else "")
     first = _random.choice(_string.ascii_lowercase)
     rest  = ''.join(_random.choices(chars, k=length - 1))
     return first + rest
 
-def _unp_menu_text(cfg: dict) -> str:
+def _unp_gen_pretty() -> str:
+    """Красивое сочетание из двух слов."""
+    a = _random.choice(_PRETTY_PARTS)
+    b = _random.choice(_PRETTY_PARTS)
+    while b == a:
+        b = _random.choice(_PRETTY_PARTS)
+    sep = _random.choice(["", "_", ".", "x"])
+    num = str(_random.randint(0, 99)) if _random.random() > 0.5 else ""
+    return f"{a}{sep}{b}{num}"
+
+def _unp_is_pro(tg_id: str) -> bool:
+    sub = load_sub(tg_id)
+    return sub_active(tg_id) and sub.get("plan") == "pro"
+
+def _unp_menu_text(cfg: dict, tg_id: str = "") -> str:
+    mode = cfg.get("mode", "random")
+    mode_txt = "✨ Красивые" if mode == "pretty" else "🎲 Случайные"
     return (
         "🔍 Парсер юзернеймов\n\n"
         f"📏 Длина: {cfg.get('length', 8)} символов\n"
         f"🔢 Цифры: {'✅ Да' if cfg.get('digits', True) else '❌ Нет'}\n"
-        f"📦 Количество: {cfg.get('count', 5)} штук\n\n"
-        "Нажми Генерировать чтобы начать\n\n"
+        f"📦 Количество: {cfg.get('count', 5)} штук\n"
+        f"🎨 Режим: {mode_txt}\n\n"
+        "ℹ️ Бот генерирует случайные юзернеймы.\n"
+        "Проверь доступность вручную: t.me/username\n\n"
         "📢 @userbotcbet | 🤖 @cbet_controller_bot"
     )
 
-def _unp_menu_kb(cfg: dict) -> InlineKeyboardMarkup:
+def _unp_menu_kb(cfg: dict, tg_id: str = "") -> InlineKeyboardMarkup:
     digits_label = "🔢 Цифры: ✅" if cfg.get("digits", True) else "🔢 Цифры: ❌"
-    return InlineKeyboardMarkup([
+    mode = cfg.get("mode", "random")
+    is_pro = _unp_is_pro(tg_id) if tg_id else False
+    pretty_label = "✨ Красивые (Pro)" if not is_pro else ("✨ Красивые ✅" if mode == "pretty" else "✨ Красивые")
+    rows = [
         [InlineKeyboardButton("➖", callback_data="unp_len_minus"),
          InlineKeyboardButton(f"📏 {cfg.get('length', 8)}", callback_data="unp_noop"),
          InlineKeyboardButton("➕", callback_data="unp_len_plus")],
@@ -281,40 +313,59 @@ def _unp_menu_kb(cfg: dict) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("➖", callback_data="unp_count_minus"),
          InlineKeyboardButton(f"📦 {cfg.get('count', 5)} шт.", callback_data="unp_noop"),
          InlineKeyboardButton("➕", callback_data="unp_count_plus")],
-        [InlineKeyboardButton("🔍 Генерировать", callback_data="unp_generate")],
+        [InlineKeyboardButton(
+            "🎲 Случайные ✅" if mode == "random" else "🎲 Случайные",
+            callback_data="unp_mode_random"
+        ),
+         InlineKeyboardButton(
+            pretty_label,
+            callback_data="unp_mode_pretty"
+        )],
+        [InlineKeyboardButton("🔍 Генерировать", callback_data="unp_generate"),
+         InlineKeyboardButton("ℹ️ Инфо", callback_data="unp_info")],
         [InlineKeyboardButton("◀️ Назад в меню", callback_data="back_main")],
-    ])
+    ]
+    return InlineKeyboardMarkup(rows)
 
 def _unp_result_kb(sess: dict) -> InlineKeyboardMarkup:
     has_prev = sess.get("current_idx", 0) > 0
-    rows = []
-    nav  = []
+    nav = []
     if has_prev:
         nav.append(InlineKeyboardButton("◀️ Вернуться", callback_data="unp_prev"))
     nav.append(InlineKeyboardButton("▶️ Вперёд", callback_data="unp_next"))
-    rows.append(nav)
-    rows.append([
-        InlineKeyboardButton("⚙️ Настройки", callback_data="unp_settings"),
-        InlineKeyboardButton("◀️ В меню",    callback_data="back_main"),
+    return InlineKeyboardMarkup([
+        nav,
+        [InlineKeyboardButton("⚙️ Настройки", callback_data="unp_settings"),
+         InlineKeyboardButton("◀️ В меню",    callback_data="back_main")],
     ])
-    return InlineKeyboardMarkup(rows)
 
 def _unp_format(batch: list, idx: int, total: int) -> str:
     if not batch:
-        return "😔 Не нашли свободных юзернеймов. Попробуй ещё раз.\n\n📢 @userbotcbet"
-    lines = [f"✅ Свободные юзернеймы (батч {idx+1}/{total}):\n"]
+        return "😔 Юзернеймов нет. Попробуй ещё раз.\n\n📢 @userbotcbet"
+    # Используем моноширинный шрифт чтобы не были кликабельными ссылками
+    lines = [f"✅ Юзернеймы (батч {idx+1}/{total}):\n"]
     for un in batch:
-        lines.append(f"  {un}")
-    lines.append("\n📢 @userbotcbet | 🤖 @cbet_controller_bot")
+        # Убираем @ чтобы не создавать кликабельные ссылки
+        name = un.lstrip("@")
+        lines.append(f"  `{name}`")
+    lines.append("\nПроверь: t.me/username")
+    lines.append("📢 @userbotcbet | 🤖 @cbet_controller_bot")
     return "\n".join(lines)
 
 async def _unp_generate(tg_id: str, cfg: dict) -> list:
-    """Мгновенная генерация юзернеймов без проверки занятости."""
+    """Генерация юзернеймов — рандом или красивые сочетания."""
     length = max(5, min(32, cfg.get("length", 8)))
     digits = cfg.get("digits", True)
     count  = cfg.get("count", 5)
-    # Генерируем мгновенно — проверку занятости делаем через t.me/username
-    return [f"@{_unp_gen(length, digits)}" for _ in range(count)]
+    mode   = cfg.get("mode", "random")
+
+    results = []
+    for _ in range(count):
+        if mode == "pretty":
+            results.append(_unp_gen_pretty())
+        else:
+            results.append(_unp_gen(length, digits))
+    return results
 
 
 async def check_subscription(bot, tg_id: str) -> bool:
@@ -1125,53 +1176,76 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Парсер юзернеймов ──
     if data == "u_unparser":
-        # Запрашиваем пароль для доступа
-        await send_plain(query.message,
-            "🔍 Парсер юзернеймов\n\n"
-            "🔒 Введи пароль для доступа к модулю:",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]))
-        context.user_data["await_unparser_pass"] = True
+        if tg_id not in UNPARSER_SESSIONS:
+            UNPARSER_SESSIONS[tg_id] = {
+                "cfg": {"length": 8, "digits": True, "count": 5, "mode": "random"},
+                "history": [], "current_idx": -1, "running": False,
+            }
+        cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
+        await send_plain(query.message, _unp_menu_text(cfg, tg_id), _unp_menu_kb(cfg, tg_id))
         return "UNPARSER"
         return "UNPARSER"
 
     if data == "unp_noop":
         return "UNPARSER"
 
-    if data == "unp_settings":
-        if tg_id not in UNPARSER_SESSIONS:
-            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5}, "history": [], "current_idx": -1, "running": False}
-        cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
-        await query.message.reply_text(_unp_menu_text(cfg), reply_markup=_unp_menu_kb(cfg))
+    if data == "unp_info":
+        await send_plain(query.message,
+            "ℹ️ Парсер юзернеймов\n\n"
+            "Генерирует юзернеймы для Telegram.\n\n"
+            "🎲 Случайные — рандомные буквы и цифры нужной длины\n"
+            "✨ Красивые — осмысленные сочетания слов (dark neo, fire blade)\n\n"
+            "⚙️ Настройки:\n"
+            "📏 Длина — от 5 до 32 символов\n"
+            "🔢 Цифры — включить/выключить цифры\n"
+            "📦 Количество — от 1 до 20 штук\n\n"
+            "После генерации проверь доступность:\n"
+            "t.me/username — если открывается профиль — занят\n"
+            "Если не найден — свободен!\n\n"
+            "📢 @userbotcbet | 🤖 @cbet_controller_bot",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="unp_settings")]]))
         return "UNPARSER"
 
-    if data in ("unp_len_minus", "unp_len_plus", "unp_digits", "unp_count_minus", "unp_count_plus"):
         if tg_id not in UNPARSER_SESSIONS:
-            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5}, "history": [], "current_idx": -1, "running": False}
+            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5, "mode": "random"}, "history": [], "current_idx": -1, "running": False}
         cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
-        if data == "unp_len_minus":   cfg["length"] = max(5,  cfg.get("length", 8) - 1)
-        elif data == "unp_len_plus":  cfg["length"] = min(32, cfg.get("length", 8) + 1)
-        elif data == "unp_digits":    cfg["digits"] = not cfg.get("digits", True)
-        elif data == "unp_count_minus": cfg["count"] = max(1,  cfg.get("count", 5) - 1)
-        elif data == "unp_count_plus":  cfg["count"] = min(20, cfg.get("count", 5) + 1)
-        await query.message.reply_text(_unp_menu_text(cfg), reply_markup=_unp_menu_kb(cfg))
+        await query.message.reply_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id))
+        return "UNPARSER"
+
+    if data in ("unp_len_minus", "unp_len_plus", "unp_digits", "unp_count_minus", "unp_count_plus", "unp_mode_random", "unp_mode_pretty"):
+        if tg_id not in UNPARSER_SESSIONS:
+            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5, "mode": "random"}, "history": [], "current_idx": -1, "running": False}
+        cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
+        if data == "unp_len_minus":     cfg["length"] = max(5,  cfg.get("length", 8) - 1)
+        elif data == "unp_len_plus":    cfg["length"] = min(32, cfg.get("length", 8) + 1)
+        elif data == "unp_digits":      cfg["digits"] = not cfg.get("digits", True)
+        elif data == "unp_count_minus": cfg["count"]  = max(1,  cfg.get("count", 5) - 1)
+        elif data == "unp_count_plus":  cfg["count"]  = min(20, cfg.get("count", 5) + 1)
+        elif data == "unp_mode_random": cfg["mode"]   = "random"
+        elif data == "unp_mode_pretty":
+            if not _unp_is_pro(tg_id):
+                await query.answer("👑 Только для Pro подписки!", show_alert=True)
+                return "UNPARSER"
+            cfg["mode"] = "pretty"
+        await query.message.reply_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id))
         return "UNPARSER"
 
     if data == "unp_generate":
         if tg_id not in UNPARSER_SESSIONS:
-            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5}, "history": [], "current_idx": -1, "running": False}
+            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5, "mode": "random"}, "history": [], "current_idx": -1, "running": False}
         sess = UNPARSER_SESSIONS[tg_id]
         if sess.get("running"):
             await query.answer("⏳ Уже генерирую...", show_alert=True)
             return "UNPARSER"
         sess["running"] = True
-        await query.message.reply_text("⏳ Генерирую и проверяю юзернеймы...", reply_markup=None)
-        batch = await _unp_generate(tg_id, sess["cfg"])
+        sess["running"] = True
+        await query.message.reply_text("⏳ Генерирую юзернеймы...", reply_markup=None)
         sess["running"] = False
         sess["history"].append(batch)
         sess["current_idx"] = len(sess["history"]) - 1
         text = _unp_format(batch, sess["current_idx"], len(sess["history"]))
         await query.message.reply_text(text, reply_markup=_unp_result_kb(sess))
-        return "UNPARSER"
+        await query.message.reply_text(text, reply_markup=_unp_result_kb(sess), parse_mode=ParseMode.MARKDOWN)
 
     if data == "unp_next":
         if tg_id not in UNPARSER_SESSIONS:
@@ -1182,7 +1256,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sess["current_idx"] < len(sess["history"]) - 1:
             sess["current_idx"] += 1
             batch = sess["history"][sess["current_idx"]]
-            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess))
+            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess), parse_mode=ParseMode.MARKDOWN)
         else:
             sess["running"] = True
             await query.message.reply_text("⏳ Генерирую новый батч...", reply_markup=None)
@@ -1190,7 +1264,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sess["running"] = False
             sess["history"].append(batch)
             sess["current_idx"] = len(sess["history"]) - 1
-            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess))
+            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess), parse_mode=ParseMode.MARKDOWN)
         return "UNPARSER"
 
     if data == "unp_prev":
@@ -1200,7 +1274,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sess["current_idx"] > 0:
             sess["current_idx"] -= 1
             batch = sess["history"][sess["current_idx"]]
-            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess))
+            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess), parse_mode=ParseMode.MARKDOWN)
         return "UNPARSER"
 
     if data == "u_partner":

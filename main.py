@@ -25,6 +25,9 @@ from telegram.constants import ParseMode
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "ТВОЙ_ТОКЕН_БОТА")
 ADMIN_PASSWORD = "uretracoin"
 ADMIN_TG_ID    = "1837883882"  # tg_id админа для уведомлений
+CHANNEL_ID     = "@userbotcbet"  # канал для обязательной подписки
+CHANNEL_URL    = "https://t.me/userbotcbet"
+CHANNEL_USERNAME = "userbotcbet"  # канал для обязательной подписки
 
 BASE_DIR    = "/app"
 DATA_DIR    = os.path.join(BASE_DIR, "data")
@@ -236,6 +239,22 @@ async def auto_run_existing_bots():
 # 🎛 БЛОК UI: КЛАВИАТУРЫ И МЕНЮ
 # ═══════════════════════════════════════════════════════════════════
 
+async def check_subscription(bot, tg_id: str) -> bool:
+    """Проверяет подписку юзера на канал."""
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=int(tg_id))
+        return member.status not in ("left", "kicked", "banned")
+    except Exception:
+        return False
+
+def get_sub_check_kb() -> InlineKeyboardMarkup:
+    """Клавиатура с кнопками подписки и проверки."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Подписаться на канал", url=CHANNEL_URL)],
+        [InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")],
+    ])
+
+
 def get_guest_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🚀 Регистрация", callback_data="g_reg")],
@@ -317,6 +336,20 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     context.user_data.clear()
     logger.info(f"/start от юзера {tg_id}")
+
+    # Проверяем подписку на канал (кроме админа)
+    if tg_id != ADMIN_TG_ID:
+        is_subbed = await check_subscription(context.bot, int(tg_id))
+        if not is_subbed:
+            await update.message.reply_text(
+                "👋 Добро пожаловать в UserBot | Ru!\n\n"
+                "Для использования бота необходимо подписаться на наш канал.\n\n"
+                f"📢 Канал: @{CHANNEL_USERNAME}\n\n"
+                "После подписки нажми кнопку ниже 👇",
+                reply_markup=get_sub_required_kb()
+            )
+            return "MENU"
+
 
     async with _file_lock:
         is_auth = is_user_authorized(tg_id)
@@ -507,6 +540,28 @@ async def _show_sub_menu(msg, tg_id: str):
     ])
     await msg.reply_text(text, reply_markup=kb)
 
+# ── Проверка подписки на канал ────────────────────────────────────
+
+async def check_subscription(bot, user_id: int) -> bool:
+    """Проверяет подписан ли юзер на канал."""
+    try:
+        member = await bot.get_chat_member(
+            chat_id=f"@{CHANNEL_USERNAME}",
+            user_id=user_id
+        )
+        return member.status not in ("left", "kicked", "banned")
+    except Exception as e:
+        logger.warning(f"Ошибка проверки подписки для {user_id}: {e}")
+        return False
+
+def get_sub_required_kb() -> InlineKeyboardMarkup:
+    """Клавиатура с кнопкой подписки и проверки."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{CHANNEL_USERNAME}")],
+        [InlineKeyboardButton("✅ Я подписался", callback_data="check_sub")]
+    ])
+
+
 # ── Вспомогательные функции автоответчика ─────────────────────────
 
 # ── timenick helpers ──────────────────────────────────────────────
@@ -661,6 +716,42 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_auth = is_user_authorized(tg_id)
         users   = load_json(USERS_FILE)
 
+    # ── Проверка подписки ──
+    if data == "check_sub":
+        tg_id_int = int(tg_id)
+        is_subbed = await check_subscription(context.bot, tg_id_int)
+        if is_subbed:
+            await query.answer("✅ Подписка подтверждена!", show_alert=False)
+            # Продолжаем как обычно — показываем главное меню
+            async with _file_lock:
+                is_auth_now = is_user_authorized(tg_id)
+                users_now   = load_json(USERS_FILE)
+            if is_auth_now:
+                u_info = users_now[tg_id]
+                if tg_id not in USER_BOTS and u_info.get("api_id") and u_info.get("api_hash"):
+                    asyncio.create_task(
+                        start_user_bot(tg_id, int(u_info["api_id"]), u_info["api_hash"])
+                    )
+                nick   = u_info.get("nick", "Пользователь")
+                status = "🟢 активен" if tg_id in USER_BOTS else "🔴 запускается..."
+                await send_photo(
+                await send_photo(
+                    query.message, PHOTO_MENU,
+                    f"🏠 Главное меню\n\n"
+                    f"Добро пожаловать, {nick}!\n"
+                    f"Юзербот: {status}\n\n"
+                    "Выбери раздел:",
+                    get_user_kb()
+                )
+                )
+            else:
+                await send_photo(
+                    query.message, PHOTO_AUTH,
+                    "✅ Подписка подтверждена!\n\n"
+                    "Теперь можешь зарегистрироваться или войти:",
+                    get_guest_kb()
+                )
+
     # ── Назад в главное меню ──
     if data == "back_main":
         context.user_data.clear()
@@ -695,6 +786,17 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_auth:
             await send_plain(query.message, "⚠️ Сессия уже создана!", get_user_kb())
             return "MENU"
+        # Проверяем подписку на канал
+        is_subbed = await check_subscription(context.bot, tg_id)
+        if not is_subbed:
+            await send_photo(
+                query.message, PHOTO_AUTH,
+                "📢 Для регистрации необходимо подписаться на наш канал!\n\n"
+                "1. Нажми кнопку ниже и подпишись\n"
+                "2. Вернись и нажми Проверить подписку",
+                get_sub_check_kb()
+            )
+            return "MENU"
         await send_photo(
             query.message, PHOTO_AUTH,
             "🔐 Авторизация — Шаг 1 из 4\n\n"
@@ -705,6 +807,19 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             get_cancel_kb()
         )
         return "REG_NICK"
+
+    if data == "check_sub":
+        is_subbed = await check_subscription(context.bot, tg_id)
+        if is_subbed:
+            await send_photo(
+                query.message, PHOTO_AUTH,
+                "✅ Подписка подтверждена!\n\n"
+                "Теперь можешь зарегистрироваться или войти:",
+                get_guest_kb()
+            )
+        else:
+            await query.answer("❌ Ты ещё не подписан на канал!", show_alert=True)
+        return "MENU"
 
     if data == "g_login":
         if is_auth:

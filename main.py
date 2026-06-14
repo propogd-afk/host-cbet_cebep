@@ -2367,7 +2367,8 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = []
         for k, v in promos.items():
             used = len(v.get("used_by", []))
-            lines.append(f"• {k} — Тир {v['tier']} | {used}/{v.get('max_uses','∞')}")
+            plan_name = {"trial": "🆓 Пробная", "basic": "⭐️ Базовая", "pro": "👑 Про"}.get(v.get("plan", v.get("tier", "?")), "?")
+            lines.append(f"• {k} — {plan_name} {v.get('days','?')} дн. | {used}/{v.get('max_uses','∞')}")
         txt = "🎫 Промокоды:\n\n" + "\n".join(lines)
         await send_plain(query.message, txt, InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_admin")]]))
         return "ADMIN_MENU"

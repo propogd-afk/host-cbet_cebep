@@ -441,12 +441,19 @@ async def _show_sysmods(msg, tg_id: str, section: str = "main"):
         from datetime import datetime
         preview = f"{nick} | {datetime.now().strftime('%H:%M')}" if nick else "не задан"
 
+        tz_offset = cfg.get("tz_offset", 3)
+        from datetime import timezone, timedelta
+        tz_now    = datetime.now(timezone(timedelta(hours=tz_offset))).strftime("%H:%M")
+        preview   = f"{nick} | {tz_now}" if nick else "не задан"
+
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(f"{e} Ник по времени — {'включён' if enabled else 'выключен'}",
                                   callback_data="sysmod_timenick_toggle")],
             [InlineKeyboardButton("✏️ Изменить никнейм", callback_data="sysmod_timenick_setnick")],
             [InlineKeyboardButton(f"⏱ Секунда обновления: {second}с",
                                   callback_data="sysmod_timenick_setsec")],
+            [InlineKeyboardButton(f"🌍 Часовой пояс: UTC+{tz_offset}",
+                                  callback_data="sysmod_timenick_settz")],
             [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]
         ])
         await msg.reply_text(
@@ -454,6 +461,7 @@ async def _show_sysmods(msg, tg_id: str, section: str = "main"):
             f"Статус: {e} {'Включён' if enabled else 'Выключен'}\n"
             f"Никнейм: {nick if nick else 'не задан'}\n"
             f"Секунда обновления: {second}с\n"
+            f"Часовой пояс: UTC+{tz_offset} (сейчас {tz_now})\n"
             f"Превью: {preview}\n\n"
             "Каждую минуту в заданную секунду обновляет имя профиля.\n"
             "Формат: nickname | HH:MM",
@@ -820,6 +828,45 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "30 — обновление на 30-й секунде каждой минуты",
             InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]]))
         context.user_data["await_timenick"] = "second"
+        return "WAIT_TIMENICK"
+
+    if data == "sysmod_timenick_settz":
+        cfg = _load_timenick_cfg(tg_id)
+        cur = cfg.get("tz_offset", 3)
+        # Быстрые кнопки для популярных зон
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("UTC+2", callback_data="sysmod_tz_2"),
+             InlineKeyboardButton("UTC+3 (МСК)", callback_data="sysmod_tz_3"),
+             InlineKeyboardButton("UTC+4", callback_data="sysmod_tz_4")],
+            [InlineKeyboardButton("UTC+5", callback_data="sysmod_tz_5"),
+             InlineKeyboardButton("UTC+6", callback_data="sysmod_tz_6"),
+             InlineKeyboardButton("UTC+7", callback_data="sysmod_tz_7")],
+            [InlineKeyboardButton("✏️ Ввести вручную", callback_data="sysmod_timenick_settz_manual")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]
+        ])
+        await send_plain(query.message,
+            f"🌍 Выбери часовой пояс\n\nСейчас: UTC+{cur}",
+            kb)
+        return "MENU"
+
+    if data.startswith("sysmod_tz_"):
+        offset = int(data[len("sysmod_tz_"):])
+        cfg = _load_timenick_cfg(tg_id)
+        cfg["tz_offset"] = offset
+        _save_timenick_cfg(tg_id, cfg)
+        if USER_BOTS.get(tg_id) and cfg.get("enabled"):
+            client = USER_BOTS[tg_id]
+            client._timenick_stop(tg_id)
+            asyncio.create_task(client._timenick_start(tg_id))
+        await _show_sysmods(query.message, tg_id, "timenick")
+        return "MENU"
+
+    if data == "sysmod_timenick_settz_manual":
+        await send_plain(query.message,
+            "🌍 Введи смещение от UTC (целое число):\n\n"
+            "Примеры: 3 (Москва), 5 (Екб), -5 (США EST)",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]]))
+        context.user_data["await_timenick"] = "tz"
         return "WAIT_TIMENICK"
 
     # ── Магазин стоковых модулей ──
@@ -1352,17 +1399,28 @@ async def wait_timenick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_plain(update.message, f"✅ Никнейм сохранён: {text}", None)
 
     elif field == "second":
-        if not text.isdigit() or not (0 <= int(text) <= 59):
+        if not text.lstrip("-").isdigit() or not (0 <= int(text) <= 59):
             await send_plain(update.message, "⚠️ Введи число от 0 до 59.", None)
             return "WAIT_TIMENICK"
         cfg["second"] = int(text)
         _save_timenick_cfg(tg_id, cfg)
-        # Перезапускаем если включён
         client = USER_BOTS.get(tg_id)
         if client and cfg.get("enabled"):
             client._timenick_stop(tg_id)
             asyncio.create_task(client._timenick_start(tg_id))
         await send_plain(update.message, f"✅ Секунда обновления: {text}с", None)
+
+    elif field == "tz":
+        if not text.lstrip("-").isdigit() or not (-12 <= int(text) <= 14):
+            await send_plain(update.message, "⚠️ Введи число от -12 до 14.", None)
+            return "WAIT_TIMENICK"
+        cfg["tz_offset"] = int(text)
+        _save_timenick_cfg(tg_id, cfg)
+        client = USER_BOTS.get(tg_id)
+        if client and cfg.get("enabled"):
+            client._timenick_stop(tg_id)
+            asyncio.create_task(client._timenick_start(tg_id))
+        await send_plain(update.message, f"✅ Часовой пояс: UTC+{text}", None)
 
     context.user_data.pop("await_timenick", None)
     await _show_sysmods(update.message, tg_id, "timenick")

@@ -32,7 +32,7 @@ CHANNEL_USERNAME = "userbotcbet"  # канал для обязательной �
 
 BASE_DIR    = "/app"
 DATA_DIR    = os.path.join(BASE_DIR, "data")
-MODULES_DIR = os.path.join(BASE_DIR, "modules")
+MODULES_DIR = os.path.join(DATA_DIR, "modules")
 IMAGES_DIR  = os.path.join(BASE_DIR, "images")
 LOG_FILE    = os.path.join(BASE_DIR, "bot.log")
 
@@ -1075,12 +1075,19 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "check_sub":
         is_subbed = await check_subscription(context.bot, tg_id)
         if is_subbed:
-            await send_photo(
-                query.message, PHOTO_AUTH,
-                "✅ Подписка подтверждена!\n\n"
-                "Теперь можешь зарегистрироваться или войти:",
-                get_guest_kb()
-            )
+            # Редактируем существующее сообщение вместо отправки нового
+            try:
+                await query.message.edit_text(
+                    "✅ Подписка подтверждена!\n\n"
+                    "Теперь можешь зарегистрироваться или войти:",
+                    reply_markup=get_guest_kb()
+                )
+            except Exception:
+                await send_photo(
+                    query.message, PHOTO_AUTH,
+                    "✅ Подписка подтверждена!\n\nТеперь можешь зарегистрироваться или войти:",
+                    get_guest_kb()
+                )
         else:
             await query.answer("❌ Ты ещё не подписан на канал!", show_alert=True)
         return "MENU"

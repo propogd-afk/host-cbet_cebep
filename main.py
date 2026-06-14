@@ -1819,7 +1819,7 @@ async def login_phone_existing(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         await client.connect()
-        sent_code = await client.send_code_request(phone)
+        sent_code = await client.send_code_request(phone, force_sms=True)
         context.user_data["client"]          = client
         context.user_data["phone_code_hash"] = sent_code.phone_code_hash
         context.user_data["pin_entered"]     = ""
@@ -1934,7 +1934,7 @@ async def login_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         await client.connect()
-        sent_code = await client.send_code_request(phone)
+        sent_code = await client.send_code_request(phone, force_sms=True)
         context.user_data["client"]          = client
         context.user_data["phone_code_hash"] = sent_code.phone_code_hash
         context.user_data["pin_entered"]     = ""

@@ -432,8 +432,12 @@ def can_use_sys_mod(tg_id: str, mod_name: str) -> bool:
     plan = get_plan(tg_id)
     if plan["all_sys"]:
         return True
-    sub = load_sub(tg_id)
-    return mod_name in sub.get("chosen_sys", [])
+    sub     = load_sub(tg_id)
+    chosen  = sub.get("chosen_sys", [])
+    # Если chosen_sys ещё не выбраны — разрешаем доступ (юзер ещё не выбрал)
+    if not chosen:
+        return False
+    return mod_name in chosen
 
 def can_install_mod(tg_id: str, current_count: int) -> bool:
     plan = get_plan(tg_id)
@@ -797,25 +801,28 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MENU"
 
     if data == "sub_buy_basic":
-        # Отправляем инвойс со звёздами
+        from telegram import LabeledPrice
         await context.bot.send_invoice(
             chat_id=query.message.chat_id,
             title="Базовая подписка — UserBot | Ru",
             description="30 дней. 3 модуля из магазина, 2 системных на выбор.",
             payload=f"sub_basic_{tg_id}",
+            provider_token="",
             currency="XTR",
-            prices=[{"label": "Базовая подписка", "amount": 25}],
+            prices=[LabeledPrice("Базовая подписка", 25)],
         )
         return "MENU"
 
     if data == "sub_buy_pro":
+        from telegram import LabeledPrice
         await context.bot.send_invoice(
             chat_id=query.message.chat_id,
             title="Про подписка — UserBot | Ru",
             description="30 дней. Все модули из магазина и все системные модули.",
             payload=f"sub_pro_{tg_id}",
+            provider_token="",
             currency="XTR",
-            prices=[{"label": "Про подписка", "amount": 50}],
+            prices=[LabeledPrice("Про подписка", 50)],
         )
         return "MENU"
 
@@ -1464,17 +1471,43 @@ async def _finish_auth(update, context, tg_id: str, client):
         save_json(USERS_FILE, users)
     USER_BOTS[tg_id] = client
     load_user_modules(client, tg_id)
-    msg = update.callback_query.message if update.callback_query else update.message
-    await send_photo(
-        msg, PHOTO_MENU,
-        f"🎉 Добро пожаловать, {nick}!\n\n"
-        "Твой юзербот успешно запущен в облаке.\n\n"
-        "⚡️ Сессия Telethon активна\n"
-        "🧩 Модули готовы к установке\n"
-        "🤖 Соня ждёт твоих команд\n\n"
-        "Выбери раздел:",
-        get_user_kb()
-    )
+
+    msg  = update.callback_query.message if update.callback_query else update.message
+
+    # Выдаём пробную подписку при первой регистрации
+    sub    = load_sub(tg_id)
+    is_new = not sub.get("plan")
+    if is_new:
+        from datetime import timezone, timedelta
+        expires = (datetime.now(timezone.utc) + timedelta(days=5)).timestamp()
+        sub["plan"]        = "trial"
+        sub["expires"]     = expires
+        sub["chosen_sys"]  = []
+        sub["chosen_mods"] = []
+        save_sub(tg_id, sub)
+
+    if is_new:
+        await send_photo(
+            msg, PHOTO_MENU,
+            f"🎉 Добро пожаловать, {nick}!\n\n"
+            "Твой юзербот успешно запущен в облаке.\n\n"
+            "🆓 Тебе выдана пробная подписка на 5 дней!\n\n"
+            "Выбери 1 системный модуль который хочешь попробовать:",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("🤖 Автоответчик",   callback_data="sub_choose_sys_autoreply_trial")],
+                [InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")],
+            ])
+        )
+    else:
+        await send_photo(
+            msg, PHOTO_MENU,
+            f"🎉 Добро пожаловать, {nick}!\n\n"
+            "Твой юзербот успешно запущен в облаке.\n\n"
+            "⚡️ Сессия Telethon активна\n"
+            "🧩 Модули готовы к установке\n\n"
+            "Выбери раздел:",
+            get_user_kb()
+        )
     return "MENU"
 
 async def _do_sign_in(update, context, tg_id: str, code: str):
@@ -1756,14 +1789,38 @@ async def promo_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_json(PROMO_FILE, promos)
 
     plan = SUB_PLANS.get(plan_key, SUB_PLANS["basic"])
-    await send_plain(update.message,
-        f"✅ Код активирован!\n"
 
-        f"{plan['emoji']} {plan['name']} подписка — {days} дней\n"
-
-        f"Доступно модулей: {plan['mod_slots'] if plan['mod_slots'] < 999 else 'все'}\n"
-        f"Системных: {plan['sys_slots'] if plan['sys_slots'] < 999 else 'все'}",
-        get_user_kb())
+    if plan_key == "pro":
+        # Про — открываем всё без выбора
+        await send_plain(update.message,
+            f"✅ Код активирован!\n\n"
+            f"{plan['emoji']} {plan['name']} — {days} дней\n"
+            "Все модули и системные функции доступны.",
+            get_user_kb())
+    elif plan_key == "basic":
+        # Базовая — выбираем 2 системных модуля
+        await send_plain(update.message,
+            f"✅ Код активирован!\n\n"
+            f"{plan['emoji']} {plan['name']} — {days} дней\n\n"
+            "Выбери до 2 системных модулей (нажимай по одному):",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("🤖 Автоответчик",   callback_data="sub_choose_sys_autoreply_basic")],
+                [InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_basic")],
+            ]))
+    elif plan_key == "trial":
+        # Пробная — выбираем 1 системный модуль
+        await send_plain(update.message,
+            f"✅ Код активирован!\n\n"
+            f"{plan['emoji']} {plan['name']} — {days} дней\n\n"
+            "Выбери 1 системный модуль:",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("🤖 Автоответчик",   callback_data="sub_choose_sys_autoreply_trial")],
+                [InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")],
+            ]))
+    else:
+        await send_plain(update.message,
+            f"✅ Код активирован! {plan['emoji']} {plan['name']} — {days} дней",
+            get_user_kb())
     return "MENU"
 
 

@@ -116,34 +116,38 @@ def safe_md(text: str) -> str:
 # ⚡️ БЛОК ДВИЖКА TELETHON
 # ═══════════════════════════════════════════════════════════════════
 
-def _load_autoreply_module(client, tg_id: str):
-    """Загружает системный модуль автоответчика из autoreply.py."""
+def _load_sys_module(name: str, client, tg_id: str):
+    """Универсальный загрузчик системных модулей."""
     import importlib.util, sys as _sys
-    src = os.path.join(DATA_DIR, "autoreply.py")
-    # Fallback — ищем рядом с main.py
+    src = os.path.join(DATA_DIR, f"{name}.py")
     if not os.path.exists(src):
-        src = os.path.join(BASE_DIR, "autoreply.py")
+        src = os.path.join(BASE_DIR, f"{name}.py")
     if not os.path.exists(src):
+        logger.warning(f"Системный модуль {name}.py не найден")
         return
     try:
-        mod_key = f"autoreply_{tg_id}"
+        mod_key = f"{name}_{tg_id}"
         spec    = importlib.util.spec_from_file_location(mod_key, src)
         module  = importlib.util.module_from_spec(spec)
         _sys.modules[mod_key] = module
         spec.loader.exec_module(module)
         if hasattr(module, "init_telethon"):
             module.init_telethon(client)
-        logger.info(f"Системный модуль autoreply загружен для {tg_id}")
+        logger.info(f"Системный модуль {name} загружен для {tg_id}")
     except Exception as e:
-        logger.error(f"Ошибка загрузки autoreply для {tg_id}: {e}")
+        logger.error(f"Ошибка загрузки {name} для {tg_id}: {e}")
+
+def _load_autoreply_module(client, tg_id: str):
+    _load_sys_module("autoreply", client, tg_id)
 
 
 def load_user_modules(client: TelegramClient, tg_id: str):
     user_dir = os.path.join(MODULES_DIR, f"user_{tg_id}")
     LOADED_MODULES.setdefault(tg_id, [])
 
-    # ── Системный модуль: автоответчик — грузится всегда ──
+    # ── Системные модули — грузятся всегда ──
     _load_autoreply_module(client, tg_id)
+    _load_sys_module("timenick", client, tg_id)
 
     if not os.path.exists(user_dir):
         return
@@ -355,6 +359,26 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Вспомогательные функции автоответчика ─────────────────────────
 
+# ── timenick helpers ──────────────────────────────────────────────
+
+def _timenick_cfg_path(tg_id: str) -> str:
+    return os.path.join(DATA_DIR, f"timenick_{tg_id}.json")
+
+def _load_timenick_cfg(tg_id: str) -> dict:
+    path = _timenick_cfg_path(tg_id)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"enabled": False, "nickname": "", "second": 0}
+
+def _save_timenick_cfg(tg_id: str, cfg: dict):
+    save_json(_timenick_cfg_path(tg_id), cfg)
+
+# ── autoreply helpers ──────────────────────────────────────────────
+
 def _autoreply_cfg_path(tg_id: str) -> str:
     return os.path.join(DATA_DIR, f"autoreply_{tg_id}.json")
 
@@ -371,55 +395,89 @@ def _load_autoreply_cfg(tg_id: str) -> dict:
 def _save_autoreply_cfg(tg_id: str, cfg: dict):
     save_json(_autoreply_cfg_path(tg_id), cfg)
 
-async def _show_sysmods(msg, tg_id: str, cfg: dict):
+async def _show_sysmods(msg, tg_id: str, section: str = "main"):
     """Отрисовывает меню системных модулей."""
-    enabled = cfg.get("enabled", False)
-    mode    = cfg.get("mode", "all")
-    style   = cfg.get("style", "normal")
 
-    status_emoji = "🟢" if enabled else "🔴"
-    toggle_text  = f"{status_emoji} Автоответчик — {'включён' if enabled else 'выключен'}"
+    if section == "autoreply":
+        cfg     = _load_autoreply_cfg(tg_id)
+        enabled = cfg.get("enabled", False)
+        mode    = cfg.get("mode", "all")
+        style   = cfg.get("style", "normal")
+        e       = "🟢" if enabled else "🔴"
 
-    MODE_LABELS = {"all": "Все", "contacts": "Контакты", "non_contacts": "Не контакты"}
-    STYLE_LABELS = {"official": "Официальный", "normal": "Обычный", "bold": "Дерзкий"}
+        MODE_LABELS  = {"all": "Все", "contacts": "Контакты", "non_contacts": "Не контакты"}
+        STYLE_LABELS = {"official": "Официальный", "normal": "Обычный", "bold": "Дерзкий"}
 
-    # Режим — активный помечается ✅
-    mode_row = [
-        InlineKeyboardButton(
-            f"{'✅ ' if mode == m else ''}{l}",
-            callback_data=f"sysmod_mode_{m}"
+        mode_row  = [InlineKeyboardButton(
+            f"{'✅ ' if mode == m else ''}{l}", callback_data=f"sysmod_mode_{m}"
+        ) for m, l in MODE_LABELS.items()]
+        style_row = [InlineKeyboardButton(
+            f"{'✅ ' if style == s else ''}{l}", callback_data=f"sysmod_style_{s}"
+        ) for s, l in STYLE_LABELS.items()]
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"{e} Автоответчик — {'включён' if enabled else 'выключен'}",
+                                  callback_data="sysmod_autoreply_toggle")],
+            mode_row,
+            style_row,
+            [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]
+        ])
+        await msg.reply_text(
+            "🤖 Автоответчик\n\n"
+            f"Статус: {e} {'Включён' if enabled else 'Выключен'}\n"
+            f"Режим: {MODE_LABELS.get(mode, mode)}\n"
+            f"Стиль: {STYLE_LABELS.get(style, style)}\n\n"
+            "Отвечает на входящие личные сообщения пока ты недоступен.",
+            reply_markup=kb
         )
-        for m, l in MODE_LABELS.items()
-    ]
-    # Стиль
-    style_row = [
-        InlineKeyboardButton(
-            f"{'✅ ' if style == s else ''}{l}",
-            callback_data=f"sysmod_style_{s}"
+
+    elif section == "timenick":
+        cfg     = _load_timenick_cfg(tg_id)
+        enabled = cfg.get("enabled", False)
+        nick    = cfg.get("nickname", "")
+        second  = cfg.get("second", 0)
+        e       = "🟢" if enabled else "🔴"
+
+        from datetime import datetime
+        preview = f"{nick} | {datetime.now().strftime('%H:%M')}" if nick else "не задан"
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"{e} Ник по времени — {'включён' if enabled else 'выключен'}",
+                                  callback_data="sysmod_timenick_toggle")],
+            [InlineKeyboardButton("✏️ Изменить никнейм", callback_data="sysmod_timenick_setnick")],
+            [InlineKeyboardButton(f"⏱ Секунда обновления: {second}с",
+                                  callback_data="sysmod_timenick_setsec")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]
+        ])
+        await msg.reply_text(
+            "🕐 Ник по времени\n\n"
+            f"Статус: {e} {'Включён' if enabled else 'Выключен'}\n"
+            f"Никнейм: {nick if nick else 'не задан'}\n"
+            f"Секунда обновления: {second}с\n"
+            f"Превью: {preview}\n\n"
+            "Каждую минуту в заданную секунду обновляет имя профиля.\n"
+            "Формат: nickname | HH:MM",
+            reply_markup=kb
         )
-        for s, l in STYLE_LABELS.items()
-    ]
 
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(toggle_text, callback_data="sysmod_autoreply_toggle")],
-        mode_row,
-        style_row,
-        [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]
-    ])
+    else:  # main
+        ar_cfg = _load_autoreply_cfg(tg_id)
+        tn_cfg = _load_timenick_cfg(tg_id)
+        ar_e   = "🟢" if ar_cfg.get("enabled") else "🔴"
+        tn_e   = "🟢" if tn_cfg.get("enabled") else "🔴"
 
-    mode_txt  = MODE_LABELS.get(mode, mode)
-    style_txt = STYLE_LABELS.get(style, style)
-
-    await msg.reply_text(
-        "🔧 Системные модули\n\n"
-        "── Автоответчик ──\n"
-        f"Статус: {status_emoji} {'Включён' if enabled else 'Выключен'}\n"
-        f"Режим: {mode_txt}\n"
-        f"Стиль: {style_txt}\n\n"
-        "Автоответчик отвечает на входящие личные сообщения\n"
-        "пока ты недоступен.",
-        reply_markup=kb
-    )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"{ar_e} Автоответчик", callback_data="u_sysmods_autoreply")],
+            [InlineKeyboardButton(f"{tn_e} Ник по времени", callback_data="u_sysmods_timenick")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]
+        ])
+        await msg.reply_text(
+            "🔧 Системные модули\n\n"
+            f"{ar_e} Автоответчик — {'включён' if ar_cfg.get('enabled') else 'выключен'}\n"
+            f"{tn_e} Ник по времени — {'включён' if tn_cfg.get('enabled') else 'выключен'}\n\n"
+            "Выбери модуль для настройки:",
+            reply_markup=kb
+        )
 
 
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -695,34 +753,74 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return "MODULE_INSTALL"
 
-    # ── Системные модули ──
+    # ── Системные модули — главное меню ──
     if data == "u_sysmods":
-        cfg = _load_autoreply_cfg(tg_id)
-        await _show_sysmods(query.message, tg_id, cfg)
+        await _show_sysmods(query.message, tg_id, "main")
         return "MENU"
 
+    if data == "u_sysmods_autoreply":
+        await _show_sysmods(query.message, tg_id, "autoreply")
+        return "MENU"
+
+    if data == "u_sysmods_timenick":
+        await _show_sysmods(query.message, tg_id, "timenick")
+        return "MENU"
+
+    # ── Автоответчик ──
     if data == "sysmod_autoreply_toggle":
         cfg = _load_autoreply_cfg(tg_id)
         cfg["enabled"] = not cfg.get("enabled", False)
         _save_autoreply_cfg(tg_id, cfg)
-        await _show_sysmods(query.message, tg_id, cfg)
+        await _show_sysmods(query.message, tg_id, "autoreply")
         return "MENU"
 
     if data.startswith("sysmod_mode_"):
-        mode = data[len("sysmod_mode_"):]
         cfg = _load_autoreply_cfg(tg_id)
-        cfg["mode"] = mode
+        cfg["mode"] = data[len("sysmod_mode_"):]
         _save_autoreply_cfg(tg_id, cfg)
-        await _show_sysmods(query.message, tg_id, cfg)
+        await _show_sysmods(query.message, tg_id, "autoreply")
         return "MENU"
 
     if data.startswith("sysmod_style_"):
-        style = data[len("sysmod_style_"):]
         cfg = _load_autoreply_cfg(tg_id)
-        cfg["style"] = style
+        cfg["style"] = data[len("sysmod_style_"):]
         _save_autoreply_cfg(tg_id, cfg)
-        await _show_sysmods(query.message, tg_id, cfg)
+        await _show_sysmods(query.message, tg_id, "autoreply")
         return "MENU"
+
+    # ── Ник по времени ──
+    if data == "sysmod_timenick_toggle":
+        cfg     = _load_timenick_cfg(tg_id)
+        enabled = not cfg.get("enabled", False)
+        cfg["enabled"] = enabled
+        _save_timenick_cfg(tg_id, cfg)
+        # Запускаем или останавливаем цикл
+        client = USER_BOTS.get(tg_id)
+        if client:
+            if enabled and cfg.get("nickname"):
+                asyncio.create_task(client._timenick_start(tg_id))
+            else:
+                client._timenick_stop(tg_id)
+        await _show_sysmods(query.message, tg_id, "timenick")
+        return "MENU"
+
+    if data == "sysmod_timenick_setnick":
+        await send_plain(query.message,
+            "✏️ Введи никнейм (без времени):\n"
+            "Пример: cbet_cebep\n\n"
+            "Бот сам добавит | HH:MM",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]]))
+        context.user_data["await_timenick"] = "nick"
+        return "WAIT_TIMENICK"
+
+    if data == "sysmod_timenick_setsec":
+        await send_plain(query.message,
+            "⏱ Введи секунду обновления (0-59):\n\n"
+            "Например: 0 — обновление в начале каждой минуты\n"
+            "30 — обновление на 30-й секунде каждой минуты",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]]))
+        context.user_data["await_timenick"] = "second"
+        return "WAIT_TIMENICK"
 
     # ── Магазин стоковых модулей ──
     if data == "mod_shop":
@@ -1231,6 +1329,46 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
     return "MENU"
 
 
+# ─── WAIT_TIMENICK: Ввод никнейма или секунды ────────────────────
+
+async def wait_timenick(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id  = str(update.effective_user.id)
+    text   = update.message.text.strip()
+    field  = context.user_data.get("await_timenick")
+
+    cfg = _load_timenick_cfg(tg_id)
+
+    if field == "nick":
+        if not text:
+            await send_plain(update.message, "⚠️ Никнейм не может быть пустым.", None)
+            return "WAIT_TIMENICK"
+        cfg["nickname"] = text
+        _save_timenick_cfg(tg_id, cfg)
+        # Перезапускаем если включён
+        client = USER_BOTS.get(tg_id)
+        if client and cfg.get("enabled"):
+            client._timenick_stop(tg_id)
+            asyncio.create_task(client._timenick_start(tg_id))
+        await send_plain(update.message, f"✅ Никнейм сохранён: {text}", None)
+
+    elif field == "second":
+        if not text.isdigit() or not (0 <= int(text) <= 59):
+            await send_plain(update.message, "⚠️ Введи число от 0 до 59.", None)
+            return "WAIT_TIMENICK"
+        cfg["second"] = int(text)
+        _save_timenick_cfg(tg_id, cfg)
+        # Перезапускаем если включён
+        client = USER_BOTS.get(tg_id)
+        if client and cfg.get("enabled"):
+            client._timenick_stop(tg_id)
+            asyncio.create_task(client._timenick_start(tg_id))
+        await send_plain(update.message, f"✅ Секунда обновления: {text}с", None)
+
+    context.user_data.pop("await_timenick", None)
+    await _show_sysmods(update.message, tg_id, "timenick")
+    return "MENU"
+
+
 # ─── SONYA_CHAT ───────────────────────────────────────────────────
 
 async def sonya_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1447,6 +1585,7 @@ def main():
             "WAIT_CODE":             [CallbackQueryHandler(pinpad_click_handler, pattern="^pin_"), CallbackQueryHandler(menu_router, pattern="^back_main$")],
             "WAIT_2FA":              [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_2fa)],
             "MODULE_INSTALL":        [CallbackQueryHandler(menu_router), MessageHandler((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
+            "WAIT_TIMENICK":         [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_timenick)],
             "SONYA_CHAT":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, sonya_chat)],
             "WAIT_PROMO_ACTIVATE":   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, promo_activate)],
             "ADMIN_LOGIN":           [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, admin_login)],

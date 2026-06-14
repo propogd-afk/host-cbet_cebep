@@ -308,25 +308,32 @@ def _unp_format(batch: list, idx: int, total: int) -> str:
     lines.append("\n📢 @userbotcbet | 🤖 @cbet_controller_bot")
     return "\n".join(lines)
 
-async def _unp_check(bot_client, username: str) -> bool:
-    """Проверяет юзернейм через Telethon."""
+async def _unp_check(client, username: str) -> bool:
+    """
+    Проверяет занятость юзернейма через ResolveUsername.
+    Если username найден — занят (False).
+    Если ошибка "not found" — свободен (True).
+    """
     try:
-        from telethon.tl.functions.account import CheckUsernameRequest
-        result = await bot_client(CheckUsernameRequest(username))
-        return bool(result)
-    except Exception:
+        from telethon.tl.functions.contacts import ResolveUsernameRequest
+        await client(ResolveUsernameRequest(username))
+        return False  # нашли — занят
+    except Exception as e:
+        err = str(e).lower()
+        if "username" in err and ("invalid" in err or "not found" in err or "no user" in err or "no_user" in err):
+            return True  # не нашли — свободен
+        # Другая ошибка (флуд и т.д.) — пропускаем
         return False
 
 async def _unp_generate(tg_id: str, cfg: dict) -> list:
     """Генерирует батч свободных юзернеймов через юзербот."""
-    from main import USER_BOTS  # noqa
-    client = USER_BOTS.get(tg_id)
-    length = max(5, min(32, cfg.get("length", 8)))
-    digits = cfg.get("digits", True)
-    count  = cfg.get("count", 5)
-    results   = []
-    attempts  = 0
-    max_att   = count * 15
+    client  = USER_BOTS.get(tg_id)
+    length  = max(5, min(32, cfg.get("length", 8)))
+    digits  = cfg.get("digits", True)
+    count   = cfg.get("count", 5)
+    results = []
+    attempts = 0
+    max_att  = count * 30  # больше попыток так как большинство занято
 
     while len(results) < count and attempts < max_att:
         attempts += 1
@@ -335,11 +342,12 @@ async def _unp_generate(tg_id: str, cfg: dict) -> list:
             continue
         if client:
             free = await _unp_check(client, un)
+            if free:
+                results.append(f"@{un}")
+            await asyncio.sleep(0.5)  # пауза чтобы не получить flood wait
         else:
-            free = True  # если нет клиента — просто генерируем
-        if free:
-            results.append(f"@{un}")
-        await asyncio.sleep(0.2)
+            # Нет юзербота — просто генерируем без проверки
+            results.append(f"@{un} (не проверен)")
 
     return results
 

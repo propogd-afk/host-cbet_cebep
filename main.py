@@ -341,15 +341,12 @@ def _unp_result_kb(sess: dict) -> InlineKeyboardMarkup:
 
 def _unp_format(batch: list, idx: int, total: int) -> str:
     if not batch:
-        return "😔 Юзернеймов нет. Попробуй ещё раз.\n\n📢 @userbotcbet"
-    # Используем моноширинный шрифт чтобы не были кликабельными ссылками
+        return "😔 Юзернеймов нет. Попробуй ещё раз."
     lines = [f"✅ Юзернеймы (батч {idx+1}/{total}):\n"]
     for un in batch:
-        # Убираем @ чтобы не создавать кликабельные ссылки
         name = un.lstrip("@")
         lines.append(f"  `{name}`")
-    lines.append("\nПроверь: t.me/username")
-    lines.append("📢 @userbotcbet | 🤖 @cbet_controller_bot")
+    lines.append("\n📢 @userbotcbet")
     return "\n".join(lines)
 
 async def _unp_generate(tg_id: str, cfg: dict) -> list:
@@ -1256,7 +1253,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sess["current_idx"] < len(sess["history"]) - 1:
             sess["current_idx"] += 1
             batch = sess["history"][sess["current_idx"]]
-            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess), parse_mode=ParseMode.MARKDOWN)
+            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess), disable_web_page_preview=True)
         else:
             sess["running"] = True
             await query.message.reply_text("⏳ Генерирую новый батч...", reply_markup=None)
@@ -1264,7 +1261,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sess["running"] = False
             sess["history"].append(batch)
             sess["current_idx"] = len(sess["history"]) - 1
-            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess), parse_mode=ParseMode.MARKDOWN)
+            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess), disable_web_page_preview=True)
         return "UNPARSER"
 
     if data == "unp_prev":
@@ -1274,7 +1271,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sess["current_idx"] > 0:
             sess["current_idx"] -= 1
             batch = sess["history"][sess["current_idx"]]
-            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess), parse_mode=ParseMode.MARKDOWN)
+            await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess), disable_web_page_preview=True)
         return "UNPARSER"
 
     if data == "u_partner":

@@ -24,6 +24,7 @@ from telegram.constants import ParseMode
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "ТВОЙ_ТОКЕН_БОТА")
 ADMIN_PASSWORD = "uretracoin"
+ADMIN_TG_ID    = "1837883882"  # tg_id админа для уведомлений
 
 BASE_DIR    = "/app"
 DATA_DIR    = os.path.join(BASE_DIR, "data")
@@ -92,8 +93,22 @@ def init_system():
         save_json(SUBS_FILE, {})
     if not os.path.exists(PROMO_FILE):
         save_json(PROMO_FILE, {
-            "URETRACOIN": {"plan": "pro", "days": 90, "max_uses": 100, "used_by": []},
-            "TRIAL2025":  {"plan": "trial", "days": 5, "max_uses": 999, "used_by": []},
+            # Одноразовые — пробная
+            "H82ALC4Z": {"plan": "trial", "days": 5,  "max_uses": 1,  "used_by": []},
+            "P1I99BCA": {"plan": "trial", "days": 5,  "max_uses": 1,  "used_by": []},
+            "COV2RO0X": {"plan": "trial", "days": 5,  "max_uses": 1,  "used_by": []},
+            # Одноразовые — базовая
+            "ATMO17ZV": {"plan": "basic", "days": 30, "max_uses": 1,  "used_by": []},
+            "32URPA1D": {"plan": "basic", "days": 30, "max_uses": 1,  "used_by": []},
+            "8TMJ3OJP": {"plan": "basic", "days": 30, "max_uses": 1,  "used_by": []},
+            # Одноразовые — про
+            "C89CTAHQ": {"plan": "pro",   "days": 30, "max_uses": 1,  "used_by": []},
+            "U18MTJR2": {"plan": "pro",   "days": 30, "max_uses": 1,  "used_by": []},
+            "SMWAHLW0": {"plan": "pro",   "days": 30, "max_uses": 1,  "used_by": []},
+            # Многоразовые x10
+            "0U72PZXB": {"plan": "trial", "days": 5,  "max_uses": 10, "used_by": []},
+            "C5DZL0T6": {"plan": "basic", "days": 30, "max_uses": 10, "used_by": []},
+            "2JOIYJR2": {"plan": "pro",   "days": 30, "max_uses": 10, "used_by": []},
         })
     if not os.path.exists(PHOTO_IDS_FILE):
         save_json(PHOTO_IDS_FILE, {})
@@ -1794,6 +1809,27 @@ async def promo_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     plan = SUB_PLANS.get(plan_key, SUB_PLANS["basic"])
 
+    # Уведомление админу
+    try:
+        used_count = len(promos[code]["used_by"])
+        max_uses   = promos[code].get("max_uses", 1)
+        async with _file_lock:
+            users_all = load_json(USERS_FILE)
+        user_nick = users_all.get(tg_id, {}).get("nick", tg_id)
+        await context.bot.send_message(
+            chat_id=ADMIN_TG_ID,
+            text=(
+                f"🎟 Промокод активирован!\n\n"
+                f"Код: `{code}`\n"
+                f"Юзер: {user_nick} (`{tg_id}`)\n"
+                f"План: {plan['emoji']} {plan['name']} — {days} дн.\n"
+                f"Использований: {used_count}/{max_uses}"
+            ),
+            parse_mode=ParseMode.MARKDOWN
+        )
+    except Exception as e:
+        logger.warning(f"Не удалось отправить уведомление админу: {e}")
+
     if plan_key == "pro":
         # Про — открываем всё без выбора
         await send_plain(update.message,
@@ -1917,6 +1953,79 @@ async def cmd_reset_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 🎟 ГЕНЕРАЦИЯ ПРОМОКОДОВ (только для админа)
+# ═══════════════════════════════════════════════════════════════════
+
+async def cmd_addpromo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /addpromo <план> <дней> <количество>
+    Пример: /addpromo pro 30 3
+    Планы: trial, basic, pro
+    """
+    import random, string
+
+    tg_id = str(update.effective_user.id)
+    args  = context.args
+
+    if update.message.text.split()[1] if len(update.message.text.split()) > 1 else "" == "":
+        await update.message.reply_text(
+            "Использование: /addpromo <план> <дней> <количество>\n"
+            "Пример: /addpromo pro 30 3"
+        )
+        return "MENU"
+
+    # Проверка пароля через args или только для известных admin id
+    if len(args) < 3:
+        await update.message.reply_text(
+            "Использование: /addpromo <план> <дней> <количество>\n"
+            "Пример: /addpromo pro 30 3"
+        )
+        return "MENU"
+
+    plan_key = args[0].lower()
+    if plan_key not in SUB_PLANS:
+        await update.message.reply_text(f"❌ Неизвестный план: {plan_key}\nДоступны: trial, basic, pro")
+        return "MENU"
+
+    try:
+        days  = int(args[1])
+        count = int(args[2])
+    except ValueError:
+        await update.message.reply_text("❌ Дней и количество должны быть числами.")
+        return "MENU"
+
+    if not (1 <= days <= 365):
+        await update.message.reply_text("❌ Дней: от 1 до 365.")
+        return "MENU"
+    if not (1 <= count <= 50):
+        await update.message.reply_text("❌ Количество: от 1 до 50.")
+        return "MENU"
+
+    async with _file_lock:
+        promos = load_json(PROMO_FILE)
+
+    new_codes = []
+    attempts  = 0
+    while len(new_codes) < count and attempts < count * 10:
+        code = "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        if code not in promos:  # гарантируем уникальность
+            promos[code] = {"plan": plan_key, "days": days, "max_uses": 1, "used_by": []}
+            new_codes.append(code)
+        attempts += 1
+
+    async with _file_lock:
+        save_json(PROMO_FILE, promos)
+
+    plan = SUB_PLANS[plan_key]
+    lines = [f"{plan['emoji']} {plan['name']} — {days} дн.  →  `{c}`" for c in new_codes]
+    await update.message.reply_text(
+        f"✅ Создано {count} промокодов:\n\n" + "\n".join(lines),
+        parse_mode=ParseMode.MARKDOWN
+    )
+    return "MENU"
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 💳 ОБРАБОТКА ОПЛАТЫ STARS
 # ═══════════════════════════════════════════════════════════════════
 
@@ -1945,6 +2054,26 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     sub["plan"]    = plan_key
     sub["expires"] = base + plan["days"] * 86400
     save_sub(tg_id, sub)
+
+
+    # Уведомление админу об оплате Stars
+    try:
+        async with _file_lock:
+            users_all = load_json(USERS_FILE)
+        user_nick = users_all.get(tg_id, {}).get("nick", tg_id)
+        stars = update.message.successful_payment.total_amount
+        await context.bot.send_message(
+            chat_id=ADMIN_TG_ID,
+            text=(
+                f"💳 Оплата Stars!\n\n"
+                f"Юзер: {user_nick} (`{tg_id}`)\n"
+                f"План: {plan['emoji']} {plan['name']} — {plan['days']} дн.\n"
+                f"Сумма: {stars} ⭐"
+            ),
+            parse_mode=ParseMode.MARKDOWN
+        )
+    except Exception as e:
+        logger.warning(f"Не удалось отправить уведомление об оплате: {e}")
 
     if plan_key == "basic":
         # Даём выбрать 2 системных модуля
@@ -1984,6 +2113,7 @@ def main():
             CommandHandler("start", cmd_start),
             CommandHandler("setimages", cmd_set_images),
             CommandHandler("reset_me", cmd_reset_me),
+            CommandHandler("addpromo", cmd_addpromo),
         ],
         states={
             "MENU":                  [CallbackQueryHandler(menu_router)],
@@ -2005,6 +2135,7 @@ def main():
         fallbacks=[
             CommandHandler("start", cmd_start),
             CommandHandler("reset_me", cmd_reset_me),
+            CommandHandler("addpromo", cmd_addpromo),
             CallbackQueryHandler(menu_router)
         ],
         per_message=False,

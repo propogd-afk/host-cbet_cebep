@@ -1224,9 +1224,12 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("👑 Только для Pro подписки!", show_alert=True)
                 return "UNPARSER"
             cfg["mode"] = "pretty"
-        await query.message.reply_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id))
+        # Обновляем существующее сообщение вместо отправки нового
+        try:
+            await query.message.edit_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id))
+        except Exception:
+            await query.message.reply_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id))
         return "UNPARSER"
-
     if data == "unp_generate":
         if tg_id not in UNPARSER_SESSIONS:
             UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5, "mode": "random"}, "history": [], "current_idx": -1, "running": False}
@@ -1235,14 +1238,14 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("⏳ Уже генерирую...", show_alert=True)
             return "UNPARSER"
         sess["running"] = True
-        sess["running"] = True
         await query.message.reply_text("⏳ Генерирую юзернеймы...", reply_markup=None)
+        batch = await _unp_generate(tg_id, sess["cfg"])
         sess["running"] = False
         sess["history"].append(batch)
         sess["current_idx"] = len(sess["history"]) - 1
         text = _unp_format(batch, sess["current_idx"], len(sess["history"]))
-        await query.message.reply_text(text, reply_markup=_unp_result_kb(sess))
-        await query.message.reply_text(text, reply_markup=_unp_result_kb(sess), parse_mode=ParseMode.MARKDOWN)
+        await query.message.reply_text(text, reply_markup=_unp_result_kb(sess), disable_web_page_preview=True)
+        return "UNPARSER"
 
     if data == "unp_next":
         if tg_id not in UNPARSER_SESSIONS:

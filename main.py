@@ -92,7 +92,8 @@ def init_system():
         save_json(SUBS_FILE, {})
     if not os.path.exists(PROMO_FILE):
         save_json(PROMO_FILE, {
-            "URETRACOIN": {"tier": 3, "days": 90, "max_uses": 100, "used_by": []}
+            "URETRACOIN": {"plan": "pro", "days": 90, "max_uses": 100, "used_by": []},
+            "TRIAL2025":  {"plan": "trial", "days": 5, "max_uses": 999, "used_by": []},
         })
     if not os.path.exists(PHOTO_IDS_FILE):
         save_json(PHOTO_IDS_FILE, {})
@@ -229,11 +230,12 @@ def get_guest_kb() -> InlineKeyboardMarkup:
 
 def get_user_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👤 Профиль",        callback_data="u_profile"),
-         InlineKeyboardButton("💎 Подписка",        callback_data="u_sub")],
-        [InlineKeyboardButton("⚙️ Модули",          callback_data="u_modules"),
-         InlineKeyboardButton("🤖 Соня (ИИ)",      callback_data="u_sonya")],
-        [InlineKeyboardButton("🔧 Системные модули", callback_data="u_sysmods")],
+        [InlineKeyboardButton("👤 Профиль",         callback_data="u_profile"),
+         InlineKeyboardButton("💎 Подписка",         callback_data="u_sub")],
+        [InlineKeyboardButton("⚙️ Модули",           callback_data="u_modules"),
+         InlineKeyboardButton("🤖 Соня (ИИ)",       callback_data="u_sonya")],
+        [InlineKeyboardButton("🔧 Системные модули", callback_data="u_sysmods"),
+         InlineKeyboardButton("🎟 Ввести код",       callback_data="u_entercode")],
         [InlineKeyboardButton("❌ Выйти (сбросить сессию)", callback_data="u_logout")]
     ])
 
@@ -357,6 +359,131 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return "MENU"
 
 
+
+# ═══════════════════════════════════════════════════════════════════
+# 💎 СИСТЕМА ПОДПИСОК
+# ═══════════════════════════════════════════════════════════════════
+
+SUB_PLANS = {
+    "trial": {
+        "name":       "Пробная",
+        "emoji":      "🆓",
+        "days":       5,
+        "price":      0,
+        "mod_slots":  1,   # слотов обычных модулей
+        "sys_slots":  1,   # слотов системных модулей
+        "all_mods":   False,
+        "all_sys":    False,
+    },
+    "basic": {
+        "name":       "Базовая",
+        "emoji":      "⭐️",
+        "days":       30,
+        "price":      25,  # звёзды
+        "mod_slots":  3,
+        "sys_slots":  2,
+        "all_mods":   False,
+        "all_sys":    False,
+    },
+    "pro": {
+        "name":       "Про",
+        "emoji":      "👑",
+        "days":       30,
+        "price":      50,
+        "mod_slots":  999,
+        "sys_slots":  999,
+        "all_mods":   True,
+        "all_sys":    True,
+    },
+}
+
+SYS_MODS_LIST = ["autoreply", "timenick"]  # все системные модули
+
+def _sub_path(tg_id: str) -> str:
+    return os.path.join(DATA_DIR, f"sub_{tg_id}.json")
+
+def load_sub(tg_id: str) -> dict:
+    path = _sub_path(tg_id)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"plan": None, "expires": None, "chosen_sys": [], "chosen_mods": []}
+
+def save_sub(tg_id: str, sub: dict):
+    save_json(_sub_path(tg_id), sub)
+
+def sub_active(tg_id: str) -> bool:
+    sub = load_sub(tg_id)
+    if not sub.get("plan") or not sub.get("expires"):
+        return False
+    from datetime import timezone
+    return datetime.now(timezone.utc).timestamp() < sub["expires"]
+
+def get_plan(tg_id: str) -> dict:
+    sub = load_sub(tg_id)
+    if not sub_active(tg_id):
+        return SUB_PLANS["trial"]  # без подписки — пробный доступ
+    return SUB_PLANS.get(sub.get("plan", "trial"), SUB_PLANS["trial"])
+
+def can_use_sys_mod(tg_id: str, mod_name: str) -> bool:
+    plan = get_plan(tg_id)
+    if plan["all_sys"]:
+        return True
+    sub = load_sub(tg_id)
+    return mod_name in sub.get("chosen_sys", [])
+
+def can_install_mod(tg_id: str, current_count: int) -> bool:
+    plan = get_plan(tg_id)
+    return current_count < plan["mod_slots"]
+
+def _sub_status_text(tg_id: str) -> str:
+    sub  = load_sub(tg_id)
+    plan = get_plan(tg_id)
+    if not sub_active(tg_id):
+        return f"{plan['emoji']} Подписка не активна"
+    from datetime import timezone
+    exp  = datetime.fromtimestamp(sub["expires"], tz=timezone.utc)
+    days = (exp - datetime.now(timezone.utc)).days
+    return f"{plan['emoji']} {plan['name']} — ещё {days} дн."
+
+
+async def _show_sub_menu(msg, tg_id: str):
+    sub  = load_sub(tg_id)
+    plan = get_plan(tg_id)
+    active = sub_active(tg_id)
+
+    from datetime import timezone
+    if active and sub.get("expires"):
+        exp  = datetime.fromtimestamp(sub["expires"], tz=timezone.utc)
+        days = (exp - datetime.now(timezone.utc)).days
+        exp_str = f"до {exp.strftime('%d.%m.%Y')} ({days} дн.)"
+    else:
+        exp_str = "не активна"
+
+    chosen_sys  = sub.get("chosen_sys", [])
+    chosen_mods = sub.get("chosen_mods", [])
+
+    text = (
+        "💎 Подписка\n\n"
+        f"Статус: {plan['emoji']} {plan['name']} — {exp_str}\n"
+        f"Слотов модулей: {plan['mod_slots'] if plan['mod_slots'] < 999 else '∞'}\n"
+        f"Системных модулей: {plan['sys_slots'] if plan['sys_slots'] < 999 else '∞'}\n\n"
+        "Планы:\n"
+        "🆓 Пробная (5 дн.) — бесплатно\n"
+        "⭐️ Базовая (30 дн.) — 25 ⭐\n"
+        "👑 Про (30 дн.) — 50 ⭐"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🆓 Активировать пробную", callback_data="sub_buy_trial")],
+        [InlineKeyboardButton("⭐️ Купить Базовую — 25 ⭐", callback_data="sub_buy_basic")],
+        [InlineKeyboardButton("👑 Купить Про — 50 ⭐", callback_data="sub_buy_pro")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]
+    ])
+    await msg.reply_text(text, reply_markup=kb)
+
 # ── Вспомогательные функции автоответчика ─────────────────────────
 
 # ── timenick helpers ──────────────────────────────────────────────
@@ -399,6 +526,12 @@ async def _show_sysmods(msg, tg_id: str, section: str = "main"):
     """Отрисовывает меню системных модулей."""
 
     if section == "autoreply":
+        if not can_use_sys_mod(tg_id, "autoreply"):
+            await msg.reply_text(
+                "🔒 Автоответчик недоступен на вашей подписке.\n\n"
+                "Активируй подписку в разделе 💎 Подписка.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]]))
+            return
         cfg     = _load_autoreply_cfg(tg_id)
         enabled = cfg.get("enabled", False)
         mode    = cfg.get("mode", "all")
@@ -432,6 +565,12 @@ async def _show_sysmods(msg, tg_id: str, section: str = "main"):
         )
 
     elif section == "timenick":
+        if not can_use_sys_mod(tg_id, "timenick"):
+            await msg.reply_text(
+                "🔒 Ник по времени недоступен на вашей подписке.\n\n"
+                "Активируй подписку в разделе 💎 Подписка.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]]))
+            return
         cfg     = _load_timenick_cfg(tg_id)
         enabled = cfg.get("enabled", False)
         nick    = cfg.get("nickname", "")
@@ -606,6 +745,9 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = "🟢 Запущен" if tg_id in USER_BOTS else "🔴 Остановлен"
         nick   = u.get("nick", "—")
         phone  = u.get("phone", "—")
+        sub_str = _sub_status_text(tg_id)
+        plan    = get_plan(tg_id)
+        limit   = plan["mod_slots"] if plan["mod_slots"] < 999 else "∞"
         await send_plain(
             query.message,
             f"👤 Ваш профиль\n\n"
@@ -614,25 +756,88 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📱 Телефон: {phone}\n"
             f"⚡️ Движок: Telethon\n"
             f"📊 Статус: {status}\n"
-            f"🧩 Модули: {len(mods)} загружено",
+            f"💎 Подписка: {sub_str}\n"
+            f"🧩 Модули: {len(mods)}/{limit}",
             get_cancel_kb()
         )
         return "MENU"
 
     if data == "u_sub":
-        async with _file_lock:
-            subs = load_json(SUBS_FILE)
-        tier = subs.get(tg_id, {}).get("tier", 1)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎟 Активировать промокод", callback_data="u_activate_promo")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]
-        ])
-        await send_md(query.message, f"💎 *Управление подпиской*\n\nТекущий уровень: *Тир {tier}*", kb)
+        await _show_sub_menu(query.message, tg_id)
         return "MENU"
 
-    if data == "u_activate_promo":
-        await send_plain(query.message, "🎟 Отправьте промокод в чат:", get_cancel_kb())
+    if data == "u_entercode":
+        await send_plain(query.message,
+            "🎟 Введи код подписки:\n\n"
+            "Коды выдаются администратором или приобретаются на канале @userbotcbet",
+            get_cancel_kb())
         return "WAIT_PROMO_ACTIVATE"
+
+    if data == "sub_buy_trial":
+        sub = load_sub(tg_id)
+        if sub.get("plan") == "trial":
+            await send_plain(query.message, "⚠️ Пробная подписка уже была активирована.", None)
+            await _show_sub_menu(query.message, tg_id)
+            return "MENU"
+        from datetime import timezone, timedelta
+        expires = (datetime.now(timezone.utc) + timedelta(days=5)).timestamp()
+        sub["plan"]    = "trial"
+        sub["expires"] = expires
+        sub["chosen_sys"]  = []
+        sub["chosen_mods"] = []
+        save_sub(tg_id, sub)
+        await send_plain(query.message,
+            "🆓 Пробная подписка активирована на 5 дней!\n\n"
+            "Выбери 1 системный модуль который хочешь использовать:",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_trial")],
+                [InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")],
+            ])
+        )
+        return "MENU"
+
+    if data == "sub_buy_basic":
+        # Отправляем инвойс со звёздами
+        await context.bot.send_invoice(
+            chat_id=query.message.chat_id,
+            title="Базовая подписка — UserBot | Ru",
+            description="30 дней. 3 модуля из магазина, 2 системных на выбор.",
+            payload=f"sub_basic_{tg_id}",
+            currency="XTR",
+            prices=[{"label": "Базовая подписка", "amount": 25}],
+        )
+        return "MENU"
+
+    if data == "sub_buy_pro":
+        await context.bot.send_invoice(
+            chat_id=query.message.chat_id,
+            title="Про подписка — UserBot | Ru",
+            description="30 дней. Все модули из магазина и все системные модули.",
+            payload=f"sub_pro_{tg_id}",
+            currency="XTR",
+            prices=[{"label": "Про подписка", "amount": 50}],
+        )
+        return "MENU"
+
+    if data.startswith("sub_choose_sys_"):
+        # sub_choose_sys_autoreply_trial / sub_choose_sys_timenick_basic
+        parts   = data[len("sub_choose_sys_"):].rsplit("_", 1)
+        mod     = parts[0]
+        plan_key = parts[1] if len(parts) > 1 else "trial"
+        plan    = SUB_PLANS.get(plan_key, SUB_PLANS["trial"])
+        sub     = load_sub(tg_id)
+        chosen  = sub.get("chosen_sys", [])
+        if mod not in chosen:
+            chosen.append(mod)
+        # Ограничиваем по слотам
+        chosen = chosen[:plan["sys_slots"]]
+        sub["chosen_sys"] = chosen
+        save_sub(tg_id, sub)
+        await send_plain(query.message,
+            "✅ Системный модуль активирован!\n\n"
+            "Теперь иди в 🔧 Системные модули.",
+            get_user_kb())
+        return "MENU"
 
     if data == "u_sonya":
         await send_photo(
@@ -919,12 +1124,19 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_plain(query.message, f"❌ Модуль {mod_name} не найден в магазине.", get_cancel_kb())
             return "MENU"
 
-        # Проверяем лимит
+        # Проверяем лимит по подписке
         m_file = os.path.join(DATA_DIR, f"user_modules_{tg_id}.json")
         async with _file_lock:
             m_data = load_json(m_file)
-        if len(m_data.get("modules", [])) >= 5:
-            await send_plain(query.message, "⚠️ Достигнут лимит модулей (5/5). Удалите один для установки нового.", get_user_kb())
+        current = len(m_data.get("modules", []))
+        plan    = get_plan(tg_id)
+        limit   = plan["mod_slots"]
+        if current >= limit:
+            await send_plain(query.message,
+                f"⚠️ Достигнут лимит модулей ({current}/{limit}) для твоей подписки.\n"
+
+                f"Улучши подписку в разделе 💎 Подписка.",
+                get_user_kb())
             return "MENU"
 
         # Копируем файл в папку юзера
@@ -1351,8 +1563,15 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
     m_file = os.path.join(DATA_DIR, f"user_modules_{tg_id}.json")
     async with _file_lock:
         m_data = load_json(m_file)
-    if len(m_data.get("modules", [])) >= 5:
-        await send_plain(update.message, "⚠️ Достигнут лимит модулей (5/5). Удалите один для установки нового.", get_user_kb())
+    current = len(m_data.get("modules", []))
+    plan    = get_plan(tg_id)
+    limit   = plan["mod_slots"]
+    if current >= limit:
+        await send_plain(update.message,
+            f"⚠️ Достигнут лимит модулей ({current}/{limit}) для твоей подписки.\n"
+
+            f"Улучши подписку в разделе 💎 Подписка.",
+            get_user_kb())
         return "MENU"
 
     user_dir = os.path.join(MODULES_DIR, f"user_{tg_id}")
@@ -1502,28 +1721,49 @@ async def promo_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     async with _file_lock:
         promos = load_json(PROMO_FILE)
-        subs   = load_json(SUBS_FILE)
 
     if code not in promos:
-        await send_plain(update.message, "❌ Промокод не найден. Проверьте правильность ввода.", get_cancel_kb())
+        await send_plain(update.message,
+            "❌ Код не найден. Проверь правильность ввода.\n"
+
+            "Коды можно получить на канале @userbotcbet",
+            get_cancel_kb())
         return "WAIT_PROMO_ACTIVATE"
 
     promo = promos[code]
     if tg_id in promo.get("used_by", []):
-        await send_plain(update.message, "⚠️ Вы уже использовали этот промокод.", get_user_kb())
+        await send_plain(update.message, "⚠️ Этот код уже был использован тобой.", get_user_kb())
         return "MENU"
     if len(promo.get("used_by", [])) >= promo.get("max_uses", 1):
-        await send_plain(update.message, "⚠️ Промокод исчерпан.", get_user_kb())
+        await send_plain(update.message, "⚠️ Код исчерпан.", get_user_kb())
         return "MENU"
+
+    # Применяем код
+    plan_key = promo.get("plan", "basic")
+    days     = promo.get("days", SUB_PLANS.get(plan_key, {}).get("days", 30))
+
+    from datetime import timezone, timedelta
+    sub = load_sub(tg_id)
+    # Если подписка ещё активна — продлеваем
+    now_ts = datetime.now(timezone.utc).timestamp()
+    base   = max(sub.get("expires", now_ts), now_ts)
+    sub["plan"]    = plan_key
+    sub["expires"] = base + days * 86400
+    save_sub(tg_id, sub)
 
     async with _file_lock:
         promos[code]["used_by"].append(tg_id)
         save_json(PROMO_FILE, promos)
-        subs.setdefault(tg_id, {})
-        subs[tg_id]["tier"] = promo["tier"]
-        save_json(SUBS_FILE, subs)
 
-    await send_plain(update.message, f"✅ Промокод активирован!\n\n💎 Ваш новый тир: {promo['tier']}", get_user_kb())
+    plan = SUB_PLANS.get(plan_key, SUB_PLANS["basic"])
+    await send_plain(update.message,
+        f"✅ Код активирован!\n"
+
+        f"{plan['emoji']} {plan['name']} подписка — {days} дней\n"
+
+        f"Доступно модулей: {plan['mod_slots'] if plan['mod_slots'] < 999 else 'все'}\n"
+        f"Системных: {plan['sys_slots'] if plan['sys_slots'] < 999 else 'все'}",
+        get_user_kb())
     return "MENU"
 
 
@@ -1616,6 +1856,57 @@ async def cmd_reset_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 💳 ОБРАБОТКА ОПЛАТЫ STARS
+# ═══════════════════════════════════════════════════════════════════
+
+async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждаем любой платёж."""
+    await update.pre_checkout_query.answer(ok=True)
+
+async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выдаём подписку после успешной оплаты."""
+    tg_id   = str(update.effective_user.id)
+    payload = update.message.successful_payment.payload  # sub_basic_123 или sub_pro_123
+
+    from datetime import timezone, timedelta
+
+    if payload.startswith("sub_basic_"):
+        plan_key = "basic"
+    elif payload.startswith("sub_pro_"):
+        plan_key = "pro"
+    else:
+        return
+
+    plan = SUB_PLANS[plan_key]
+    sub  = load_sub(tg_id)
+    now_ts = datetime.now(timezone.utc).timestamp()
+    base   = max(sub.get("expires", now_ts), now_ts)
+    sub["plan"]    = plan_key
+    sub["expires"] = base + plan["days"] * 86400
+    save_sub(tg_id, sub)
+
+    if plan_key == "basic":
+        # Даём выбрать 2 системных модуля
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_basic")],
+            [InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_basic")],
+        ])
+        await update.message.reply_text(
+            f"✅ Оплата прошла! {plan['emoji']} {plan['name']} активирована на {plan['days']} дней.\n"
+
+            f"Выбери до 2 системных модулей (нажимай по одному):",
+            reply_markup=kb
+        )
+    else:
+        await update.message.reply_text(
+            f"✅ Оплата прошла! {plan['emoji']} {plan['name']} активирована на {plan['days']} дней.\n"
+
+            f"Все модули и системные функции доступны.",
+            reply_markup=get_user_kb()
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 🚀 ТОЧКА ВХОДА
 # ═══════════════════════════════════════════════════════════════════
 
@@ -1675,6 +1966,8 @@ def main():
 
     app.add_error_handler(global_error_handler)
     app.add_handler(conv)
+    app.add_handler(__import__("telegram.ext", fromlist=["PreCheckoutQueryHandler"]).PreCheckoutQueryHandler(pre_checkout))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     logger.info("✅ UserBot Manager запущен!")
     app.run_polling(drop_pending_updates=True)
 

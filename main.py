@@ -430,14 +430,18 @@ def get_plan(tg_id: str) -> dict:
 
 def can_use_sys_mod(tg_id: str, mod_name: str) -> bool:
     plan = get_plan(tg_id)
+    # Про — всё доступно
     if plan["all_sys"]:
         return True
-    sub     = load_sub(tg_id)
-    chosen  = sub.get("chosen_sys", [])
-    # Если chosen_sys ещё не выбраны — разрешаем доступ (юзер ещё не выбрал)
-    if not chosen:
-        return False
+    sub    = load_sub(tg_id)
+    chosen = sub.get("chosen_sys", [])
+    plan_key = sub.get("plan", "trial")
+    # Если chosen_sys не заполнен — показываем выбор, не блокируем
+    # Пользователь с активной подпиской может выбрать модули
+    if not chosen and plan_key in ("basic", "trial", "pro"):
+        return True  # Пустой chosen_sys = ещё не выбрал, но подписка есть
     return mod_name in chosen
+
 
 def can_install_mod(tg_id: str, current_count: int) -> bool:
     plan = get_plan(tg_id)

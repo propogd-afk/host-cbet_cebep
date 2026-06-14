@@ -406,7 +406,9 @@ def get_user_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton("🎟 Ввести код",       callback_data="u_entercode")],
         [InlineKeyboardButton("🪞 Партнёрская программа", callback_data="u_partner"),
          InlineKeyboardButton("🔍 Юзернеймы", callback_data="u_unparser")],
-        [InlineKeyboardButton("❌ Выйти (сбросить сессию)", callback_data="u_logout")]
+        [InlineKeyboardButton("🔄 Обновить", callback_data="u_refresh"),
+         InlineKeyboardButton("ℹ️ Инфо", callback_data="u_info"),
+         InlineKeyboardButton("❌ Выйти", callback_data="u_logout")]
     ])
 
 def get_cancel_kb() -> InlineKeyboardMarkup:
@@ -1382,6 +1384,51 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "3. Отправь токен сюда:",
                 InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
             return "WAIT_MIRROR_TOKEN"
+        return "MENU"
+
+    if data == "u_info":
+        await send_plain(query.message,
+            "ℹ️ UserBot | Ru — Справка\n\n"
+            "🤖 Бот: @cbet_controller_bot\n"
+            "📢 Канал: @userbotcbet\n"
+            "👤 Автор: @cbet_cebep\n\n"
+            "── Что умеет бот ──\n"
+            "⚡️ Подключает твой аккаунт через Telethon\n"
+            "🧩 Модули: спамер, троллинг, roast и др.\n"
+            "🔧 Системные: автоответчик, ник по времени\n"
+            "🔍 Парсер юзернеймов\n"
+            "🪞 Партнёрка — свой зеркальный бот\n\n"
+            "── Подписки ──\n"
+            "🆓 Пробная — 5 дней бесплатно\n"
+            "⭐️ Базовая — 25 звёзд / 30 дней\n"
+            "👑 Про — 50 звёзд / 30 дней\n\n"
+            "── Если бот не отвечает ──\n"
+            "1. Нажми 🔄 Обновить\n"
+            "2. Напиши /start\n"
+            "3. Напиши @cbet_cebep\n\n"
+            "── Команды ──\n"
+            "/start — главное меню\n"
+            "/reset_me — сбросить сессию если что-то сломалось",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]))
+        return "MENU"
+
+
+    if data == "u_refresh":
+        context.user_data.clear()
+        async with _file_lock:
+            users = load_json(USERS_FILE)
+        u_info = users.get(tg_id, {})
+        nick   = u_info.get("nick", "Пользователь")
+        status = "🟢 активен" if tg_id in USER_BOTS else "🔴 запускается..."
+        if tg_id not in USER_BOTS and u_info.get("api_id") and u_info.get("api_hash"):
+            asyncio.create_task(start_user_bot(tg_id, int(u_info["api_id"]), u_info["api_hash"]))
+        await send_photo(
+            query.message, PHOTO_MENU,
+            f"🔄 Обновлено!\n\n"
+            f"Добро пожаловать, {nick}!\n"
+            f"Юзербот: {status}",
+            get_user_kb()
+        )
         return "MENU"
 
     if data == "u_logout":

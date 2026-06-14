@@ -273,12 +273,12 @@ def _unp_gen(length: int, digits: bool) -> str:
     return first + rest
 
 def _unp_gen_pretty() -> str:
-    """Красивое сочетание из двух слов."""
+    """Красивое сочетание из двух слов — только _."""
     a = _random.choice(_PRETTY_PARTS)
     b = _random.choice(_PRETTY_PARTS)
     while b == a:
         b = _random.choice(_PRETTY_PARTS)
-    sep = _random.choice(["", "_", ".", "x"])
+    sep = "_"
     num = str(_random.randint(0, 99)) if _random.random() > 0.5 else ""
     return f"{a}{sep}{b}{num}"
 
@@ -289,42 +289,50 @@ def _unp_is_pro(tg_id: str) -> bool:
 def _unp_menu_text(cfg: dict, tg_id: str = "") -> str:
     mode = cfg.get("mode", "random")
     mode_txt = "✨ Красивые" if mode == "pretty" else "🎲 Случайные"
+    if mode == "pretty":
+        settings = f"📦 Количество: {cfg.get('count', 5)} штук"
+    else:
+        settings = (
+            f"📏 Длина: {cfg.get('length', 8)} символов\n"
+            f"🔢 Цифры: {'✅ Да' if cfg.get('digits', True) else '❌ Нет'}\n"
+            f"📦 Количество: {cfg.get('count', 5)} штук"
+        )
     return (
         "🔍 Парсер юзернеймов\n\n"
-        f"📏 Длина: {cfg.get('length', 8)} символов\n"
-        f"🔢 Цифры: {'✅ Да' if cfg.get('digits', True) else '❌ Нет'}\n"
-        f"📦 Количество: {cfg.get('count', 5)} штук\n"
+        f"{settings}\n"
         f"🎨 Режим: {mode_txt}\n\n"
-        "ℹ️ Бот генерирует случайные юзернеймы.\n"
-        "Проверь доступность вручную: t.me/username\n\n"
-        "📢 @userbotcbet | 🤖 @cbet_controller_bot"
+        "ℹ️ Проверь доступность: поищи юзернейм в Telegram\n\n"
+        "📢 @userbotcbet"
     )
 
 def _unp_menu_kb(cfg: dict, tg_id: str = "") -> InlineKeyboardMarkup:
-    digits_label = "🔢 Цифры: ✅" if cfg.get("digits", True) else "🔢 Цифры: ❌"
     mode = cfg.get("mode", "random")
     is_pro = _unp_is_pro(tg_id) if tg_id else False
     pretty_label = "✨ Красивые (Pro)" if not is_pro else ("✨ Красивые ✅" if mode == "pretty" else "✨ Красивые")
-    rows = [
-        [InlineKeyboardButton("➖", callback_data="unp_len_minus"),
-         InlineKeyboardButton(f"📏 {cfg.get('length', 8)}", callback_data="unp_noop"),
-         InlineKeyboardButton("➕", callback_data="unp_len_plus")],
-        [InlineKeyboardButton(digits_label, callback_data="unp_digits")],
-        [InlineKeyboardButton("➖", callback_data="unp_count_minus"),
-         InlineKeyboardButton(f"📦 {cfg.get('count', 5)} шт.", callback_data="unp_noop"),
-         InlineKeyboardButton("➕", callback_data="unp_count_plus")],
-        [InlineKeyboardButton(
-            "🎲 Случайные ✅" if mode == "random" else "🎲 Случайные",
-            callback_data="unp_mode_random"
-        ),
-         InlineKeyboardButton(
-            pretty_label,
-            callback_data="unp_mode_pretty"
-        )],
-        [InlineKeyboardButton("🔍 Генерировать", callback_data="unp_generate"),
-         InlineKeyboardButton("ℹ️ Инфо", callback_data="unp_info")],
-        [InlineKeyboardButton("◀️ Назад в меню", callback_data="back_main")],
-    ]
+    rows = []
+    # Длина и цифры — только в режиме случайных
+    if mode == "random":
+        digits_label = "🔢 Цифры: ✅" if cfg.get("digits", True) else "🔢 Цифры: ❌"
+        rows.append([
+            InlineKeyboardButton("➖", callback_data="unp_len_minus"),
+            InlineKeyboardButton(f"📏 {cfg.get('length', 8)}", callback_data="unp_noop"),
+            InlineKeyboardButton("➕", callback_data="unp_len_plus"),
+        ])
+        rows.append([InlineKeyboardButton(digits_label, callback_data="unp_digits")])
+    rows.append([
+        InlineKeyboardButton("➖", callback_data="unp_count_minus"),
+        InlineKeyboardButton(f"📦 {cfg.get('count', 5)} шт.", callback_data="unp_noop"),
+        InlineKeyboardButton("➕", callback_data="unp_count_plus"),
+    ])
+    rows.append([
+        InlineKeyboardButton("🎲 Случайные ✅" if mode == "random" else "🎲 Случайные", callback_data="unp_mode_random"),
+        InlineKeyboardButton(pretty_label, callback_data="unp_mode_pretty"),
+    ])
+    rows.append([
+        InlineKeyboardButton("🔍 Генерировать", callback_data="unp_generate"),
+        InlineKeyboardButton("ℹ️ Инфо", callback_data="unp_info"),
+    ])
+    rows.append([InlineKeyboardButton("◀️ Назад в меню", callback_data="back_main")])
     return InlineKeyboardMarkup(rows)
 
 def _unp_result_kb(sess: dict) -> InlineKeyboardMarkup:

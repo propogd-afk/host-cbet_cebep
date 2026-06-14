@@ -326,30 +326,37 @@ async def _unp_check(client, username: str) -> bool:
         return False
 
 async def _unp_generate(tg_id: str, cfg: dict) -> list:
-    """Генерирует батч свободных юзернеймов через юзербот."""
+    """Генерирует батч свободных юзернеймов — параллельная проверка."""
     client  = USER_BOTS.get(tg_id)
     length  = max(5, min(32, cfg.get("length", 8)))
     digits  = cfg.get("digits", True)
     count   = cfg.get("count", 5)
+
+    if not client:
+        # Нет юзербота — генерируем без проверки
+        return [f"@{_unp_gen(length, digits)} (не проверен)" for _ in range(count)]
+
     results = []
-    attempts = 0
-    max_att  = count * 30  # больше попыток так как большинство занято
+    batch_size = 10  # проверяем по 10 параллельно
 
-    while len(results) < count and attempts < max_att:
-        attempts += 1
-        un = _unp_gen(length, digits)
-        if len(un) < 5:
-            continue
-        if client:
-            free = await _unp_check(client, un)
-            if free:
+    while len(results) < count:
+        # Генерируем батч кандидатов
+        candidates = [_unp_gen(length, digits) for _ in range(batch_size)]
+
+        # Проверяем параллельно
+        tasks = [_unp_check(client, un) for un in candidates]
+        checks = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for un, free in zip(candidates, checks):
+            if free is True:
                 results.append(f"@{un}")
-            await asyncio.sleep(0.5)  # пауза чтобы не получить flood wait
-        else:
-            # Нет юзербота — просто генерируем без проверки
-            results.append(f"@{un} (не проверен)")
+                if len(results) >= count:
+                    break
 
-    return results
+        # Небольшая пауза между батчами
+        await asyncio.sleep(0.3)
+
+    return results[:count]
 
 
 async def check_subscription(bot, tg_id: str) -> bool:

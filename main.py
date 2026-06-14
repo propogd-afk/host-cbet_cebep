@@ -27,6 +27,7 @@ ADMIN_PASSWORD = "uretracoin"
 ADMIN_TG_ID    = "1837883882"  # tg_id админа для уведомлений
 CHANNEL_ID     = "@userbotcbet"  # канал для обязательной подписки
 CHANNEL_URL    = "https://t.me/userbotcbet"
+MAX_MIRRORS    = 10  # максимум зеркал одновременно
 CHANNEL_USERNAME = "userbotcbet"  # канал для обязательной подписки
 
 BASE_DIR    = "/app"
@@ -46,6 +47,8 @@ PHOTO_SONYA_SAD = os.path.join(IMAGES_DATA_DIR, "sonya_sad.jpg")
 PHOTO_MENU      = os.path.join(IMAGES_DATA_DIR, "menu.jpg")
 
 PHOTO_IDS_FILE    = os.path.join(DATA_DIR, "photo_ids.json")
+MIRRORS_FILE      = os.path.join(DATA_DIR, "mirrors.json")
+REFERRALS_FILE    = os.path.join(DATA_DIR, "referrals.json")
 STOCK_MODULES_DIR = os.path.join(DATA_DIR, "stock_modules")
 
 logging.basicConfig(
@@ -62,6 +65,7 @@ _file_lock = asyncio.Lock()
 
 USER_BOTS: dict      = {}
 LOADED_MODULES: dict = {}
+MIRROR_APPS: dict    = {}  # {partner_tg_id: Application} — запущенные зеркала
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -115,6 +119,10 @@ def init_system():
         })
     if not os.path.exists(PHOTO_IDS_FILE):
         save_json(PHOTO_IDS_FILE, {})
+    if not os.path.exists(MIRRORS_FILE):
+        save_json(MIRRORS_FILE, {})
+    if not os.path.exists(REFERRALS_FILE):
+        save_json(REFERRALS_FILE, {})
     os.makedirs(STOCK_MODULES_DIR, exist_ok=True)
 
 def is_user_authorized(tg_id: str) -> bool:
@@ -270,6 +278,7 @@ def get_user_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton("🤖 Соня (ИИ)",       callback_data="u_sonya")],
         [InlineKeyboardButton("🔧 Системные модули", callback_data="u_sysmods"),
          InlineKeyboardButton("🎟 Ввести код",       callback_data="u_entercode")],
+        [InlineKeyboardButton("🪞 Партнёрская программа", callback_data="u_partner")],
         [InlineKeyboardButton("❌ Выйти (сбросить сессию)", callback_data="u_logout")]
     ])
 
@@ -407,6 +416,190 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return "MENU"
 
 
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 🪞 СИСТЕМА ЗЕРКАЛ (партнёрские боты)
+# ═══════════════════════════════════════════════════════════════════
+
+def load_mirrors() -> dict:
+    return load_json(MIRRORS_FILE)
+
+def save_mirrors(data: dict):
+    save_json(MIRRORS_FILE, data)
+
+def load_referrals() -> dict:
+    return load_json(REFERRALS_FILE)
+
+def save_referrals(data: dict):
+    save_json(REFERRALS_FILE, data)
+
+def get_mirror_stats(partner_id: str) -> dict:
+    """Статистика партнёра — кол-во рефералов и бонусные дни."""
+    refs = load_referrals()
+    partner_refs = [r for r in refs.values() if r.get("partner_id") == partner_id]
+    return {
+        "total": len(partner_refs),
+        "bonus_days": len(partner_refs)  # +1 день за каждого
+    }
+
+def add_referral(new_user_id: str, partner_id: str):
+    """Записывает реферала и начисляет партнёру +1 день."""
+    refs = load_referrals()
+    if new_user_id in refs:
+        return  # уже зарегистрирован через реферала
+
+    refs[new_user_id] = {
+        "partner_id": partner_id,
+        "date": datetime.now().strftime("%d.%m.%Y %H:%M")
+    }
+    save_referrals(refs)
+
+    # Начисляем партнёру +1 день к подписке
+    from datetime import timezone, timedelta
+    sub = load_sub(partner_id)
+    now_ts = datetime.now(timezone.utc).timestamp()
+    base = max(sub.get("expires", now_ts), now_ts)
+    sub["expires"] = base + 86400  # +1 день
+    if not sub.get("plan"):
+        sub["plan"] = "trial"
+    save_sub(partner_id, sub)
+    logger.info(f"Реферал {new_user_id} от партнёра {partner_id} — начислен +1 день")
+
+async def start_mirror_bot(partner_id: str, token: str, partner_nick: str):
+    """Запускает зеркало бота для партнёра."""
+    from telegram.ext import ApplicationBuilder as AB
+
+    if partner_id in MIRROR_APPS:
+        try:
+            await MIRROR_APPS[partner_id].stop()
+            await MIRROR_APPS[partner_id].shutdown()
+        except Exception:
+            pass
+
+    try:
+        mirror_app = AB().token(token).build()
+
+        # Регистрируем /start для зеркала
+        async def mirror_start(update, context):
+            user_id = str(update.effective_user.id)
+            context.user_data.clear()
+
+            # Записываем реферала если юзер новый
+            users = load_json(USERS_FILE)
+            if user_id not in users:
+                add_referral(user_id, partner_id)
+
+            # Проверяем подписку на канал
+            if user_id != ADMIN_TG_ID:
+                try:
+                    member = await context.bot.get_chat_member(
+                        chat_id=CHANNEL_ID, user_id=int(user_id)
+                    )
+                    if member.status in ("left", "kicked", "banned"):
+                        await update.message.reply_text(
+                            f"👋 Добро пожаловать!\n\n"
+                            f"Это бот партнёра — {partner_nick}\n\n"
+                            "Для использования подпишись на канал @userbotcbet\n\n"
+                            "После подписки нажми /start снова.",
+                            reply_markup=InlineKeyboardMarkup([
+                                [InlineKeyboardButton("📢 Подписаться", url=CHANNEL_URL)],
+                            ])
+                        )
+                        return
+                        return
+                except Exception:
+                    pass
+
+            # Показываем обычное меню
+            is_auth = is_user_authorized(user_id)
+            users_data = load_json(USERS_FILE)
+            if is_auth:
+                u_info = users_data[user_id]
+                if user_id not in USER_BOTS and u_info.get("api_id") and u_info.get("api_hash"):
+                    asyncio.create_task(
+                        start_user_bot(user_id, int(u_info["api_id"]), u_info["api_hash"])
+                    )
+                nick = u_info.get("nick", "Пользователь")
+                await update.message.reply_text(
+                    f"🏠 Главное меню\n\n"
+                    f"Добро пожаловать, {nick}!\n\n"
+                    f"Реферальный бот партнёра: {partner_nick}",
+                    reply_markup=get_user_kb()
+                )
+            else:
+                await update.message.reply_text(
+                    "👾 UserBot | Ru\n\n"
+                    f"Реферальный бот партнёра: {partner_nick}\n\n"
+                    "Зарегистрируйся и получи пробный доступ на 5 дней!",
+                    reply_markup=get_guest_kb()
+                )
+
+        # Все остальные хендлеры — те же что и в основном боте
+        from telegram.ext import CommandHandler as CH, CallbackQueryHandler as CQH
+        from telegram.ext import MessageHandler as MH
+
+        conv = ConversationHandler(
+            entry_points=[CH("start", mirror_start)],
+            states={
+                "MENU":                 [CQH(menu_router)],
+                "REG_NICK":             [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, reg_nick)],
+                "LOGIN_PHONE":          [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, login_phone)],
+                "LOGIN_API_ID":         [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, login_api_id)],
+                "LOGIN_API_HASH":       [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, login_api_hash)],
+                "LOGIN_PHONE_EXISTING": [CQH(menu_router, pattern="^back_main$"), MH(filters.TEXT & ~filters.COMMAND, login_phone_existing)],
+                "WAIT_CODE":            [CQH(pinpad_click_handler, pattern="^pin_"), CQH(menu_router, pattern="^back_main$")],
+                "WAIT_2FA":             [CQH(menu_router, pattern="^back_main$"), MH(filters.TEXT & ~filters.COMMAND, wait_2fa)],
+                "WAIT_TIMENICK":        [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, wait_timenick)],
+                "MODULE_INSTALL":       [CQH(menu_router), MH((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
+                "SONYA_CHAT":           [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, sonya_chat)],
+                "WAIT_PROMO_ACTIVATE":  [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, promo_activate)],
+                "ADMIN_LOGIN":          [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, admin_login)],
+                "ADMIN_MENU":           [CQH(admin_router)],
+                "SET_IMAGES":           [CH("start", mirror_start), MH(filters.PHOTO, setimages_handler)],
+            },
+            fallbacks=[CH("start", mirror_start), CQH(menu_router)],
+            per_message=False, per_chat=True, per_user=True,
+            allow_reentry=True, conversation_timeout=600
+        )
+        mirror_app.add_handler(conv)
+
+        async def mirror_error(update, context):
+            logger.error(f"Ошибка в зеркале {partner_id}: {context.error}")
+
+        mirror_app.add_error_handler(mirror_error)
+
+        await mirror_app.initialize()
+        await mirror_app.start()
+        await mirror_app.updater.start_polling(drop_pending_updates=True)
+
+        MIRROR_APPS[partner_id] = mirror_app
+        logger.info(f"Зеркало для партнёра {partner_id} запущено")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка запуска зеркала для {partner_id}: {e}")
+        return False
+
+async def stop_mirror_bot(partner_id: str):
+    """Останавливает зеркало."""
+    if partner_id in MIRROR_APPS:
+        try:
+            await MIRROR_APPS[partner_id].updater.stop()
+            await MIRROR_APPS[partner_id].stop()
+            await MIRROR_APPS[partner_id].shutdown()
+            del MIRROR_APPS[partner_id]
+            logger.info(f"Зеркало {partner_id} остановлено")
+        except Exception as e:
+            logger.error(f"Ошибка остановки зеркала {partner_id}: {e}")
+
+async def auto_run_mirrors():
+    """Автозапуск зеркал при рестарте сервера."""
+    mirrors = load_mirrors()
+    for partner_id, info in mirrors.items():
+        if info.get("active") and info.get("token"):
+            logger.info(f"Автозапуск зеркала партнёра {partner_id}")
+            await start_mirror_bot(partner_id, info["token"], info.get("nick", "Партнёр"))
 
 # ═══════════════════════════════════════════════════════════════════
 # 💎 СИСТЕМА ПОДПИСОК
@@ -851,6 +1044,76 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MENU"
 
     # ── Юзер-кнопки ──
+
+    if data == "u_partner":
+        mirrors   = load_mirrors()
+        stats     = get_mirror_stats(tg_id)
+        has_mirror = tg_id in mirrors and mirrors[tg_id].get("active")
+        token_hint = mirrors[tg_id].get("token", "")[:10] + "..." if has_mirror else "не подключён"
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🔴 Отключить зеркало" if has_mirror else "➕ Подключить свой бот",
+                callback_data="partner_toggle"
+            )],
+            [InlineKeyboardButton("📊 Статистика рефералов", callback_data="partner_stats")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]
+        ])
+        await send_plain(
+            query.message,
+            f"🪞 Партнёрская программа\n\n"
+            "Подключи своего бота — он станет зеркалом UserBot | Ru.\n"
+            "За каждого нового юзера который зарегистрируется через твой бот\n"
+            "ты получаешь +1 день к подписке.\n\n"
+            f"Статус: {'🟢 Активно' if has_mirror else '🔴 Не подключено'}\n"
+            f"Токен: {token_hint}\n"
+            f"Рефералов: {stats['total']}\n"
+            f"Бонусных дней заработано: {stats['bonus_days']}",
+            kb
+        )
+        return "MENU"
+
+    if data == "partner_stats":
+        refs = load_referrals()
+        my_refs = [(uid, info) for uid, info in refs.items() if info.get("partner_id") == tg_id]
+        users_all = load_json(USERS_FILE)
+        lines = []
+        for uid, info in my_refs[-10:]:  # последние 10
+            nick = users_all.get(uid, {}).get("nick", uid)
+            lines.append(f"  • {nick} — {info.get('date','?')}")
+        total = len(my_refs)
+        txt = (
+            f"📊 Ваши рефералы\n\n"
+            f"Всего: {total}\n"
+            f"Бонусных дней: {total}\n\n"
+        )
+        if lines:
+            txt += "Последние 10:\n" + "\n".join(lines)
+        else:
+            txt += "Рефералов пока нет."
+        await send_plain(query.message, txt,
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
+        return "MENU"
+
+    if data == "partner_toggle":
+        mirrors = load_mirrors()
+        if tg_id in mirrors and mirrors[tg_id].get("active"):
+            # Отключаем
+            await stop_mirror_bot(tg_id)
+            mirrors[tg_id]["active"] = False
+            save_mirrors(mirrors)
+            await send_plain(query.message, "🔴 Зеркало отключено.", get_user_kb())
+        else:
+            # Запрашиваем токен
+            await send_plain(query.message,
+                "➕ Подключение зеркала\n\n"
+                "1. Создай бота через @BotFather командой /newbot\n"
+                "2. Скопируй токен (выглядит как 123456789:AAF...)\n"
+                "3. Отправь токен сюда:",
+                InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
+            return "WAIT_MIRROR_TOKEN"
+        return "MENU"
+
     if data == "u_logout":
         if tg_id in USER_BOTS:
             try:
@@ -1762,6 +2025,81 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
     return "MENU"
 
 
+# ─── WAIT_MIRROR_TOKEN: Ввод токена зеркала ──────────────────────
+
+async def wait_mirror_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+    token = update.message.text.strip()
+
+    # Базовая проверка формата токена
+    if ":" not in token or len(token) < 30:
+        await send_plain(update.message,
+            "❌ Неверный формат токена.\n"
+
+            "Токен выглядит так: 123456789:AAFxxxxxxxx\n"
+
+            "Попробуй ещё раз:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
+        return "WAIT_MIRROR_TOKEN"
+
+    # Проверяем лимит зеркал
+    mirrors = load_mirrors()
+    active_count = sum(1 for m in mirrors.values() if m.get("active"))
+    if active_count >= MAX_MIRRORS and tg_id not in mirrors:
+        await send_plain(update.message,
+            f"⚠️ Достигнут лимит зеркал ({MAX_MIRRORS}). Попробуй позже.",
+            get_user_kb())
+        return "MENU"
+
+    # Проверяем что токен рабочий
+    await send_plain(update.message, "⏳ Проверяем токен...", None)
+    try:
+        import aiohttp as _aio
+        async with _aio.ClientSession() as sess:
+            async with sess.get(f"https://api.telegram.org/bot{token}/getMe") as resp:
+                data = await resp.json()
+                if not data.get("ok"):
+                    raise Exception(data.get("description", "Неверный токен"))
+                bot_info = data["result"]
+                bot_name = bot_info.get("username", "unknown")
+    except Exception as e:
+        await send_plain(update.message,
+            f"❌ Ошибка токена: {e}\n\nПроверь токен и попробуй снова:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
+        return "WAIT_MIRROR_TOKEN"
+
+    # Сохраняем и запускаем зеркало
+    users_all = load_json(USERS_FILE)
+    partner_nick = users_all.get(tg_id, {}).get("nick", tg_id)
+
+    mirrors[tg_id] = {
+        "token":   token,
+        "bot_username": bot_name,
+        "nick":    partner_nick,
+        "active":  True,
+        "created": datetime.now().strftime("%d.%m.%Y %H:%M")
+    }
+    save_mirrors(mirrors)
+
+    success = await start_mirror_bot(tg_id, token, partner_nick)
+    if success:
+        await send_plain(update.message,
+            f"✅ Зеркало подключено!\n"
+
+            f"Бот: @{bot_name}\n"
+            f"За каждого нового юзера через твой бот — +1 день к подписке.\n"
+
+            f"Поделись ссылкой: t.me/{bot_name}",
+            get_user_kb())
+    else:
+        mirrors[tg_id]["active"] = False
+        save_mirrors(mirrors)
+        await send_plain(update.message,
+            "❌ Не удалось запустить зеркало. Проверь что бот не запущен в другом месте.",
+            get_user_kb())
+    return "MENU"
+
+
 # ─── WAIT_TIMENICK: Ввод никнейма или секунды ────────────────────
 
 async def wait_timenick(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1988,6 +2326,7 @@ async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("👥 Пользователи", callback_data="a_users"),
          InlineKeyboardButton("🎫 Промокоды",    callback_data="a_promos")],
+        [InlineKeyboardButton("🪞 Рефералы",     callback_data="a_referrals")],
         [InlineKeyboardButton("🚪 Выйти из админки", callback_data="back_main")]
     ])
     await send_plain(update.message, "👑 Панель администратора", kb)
@@ -2002,6 +2341,7 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("👥 Пользователи", callback_data="a_users"),
              InlineKeyboardButton("🎫 Промокоды",    callback_data="a_promos")],
+            [InlineKeyboardButton("🪞 Рефералы",     callback_data="a_referrals")],
             [InlineKeyboardButton("🚪 Выйти из админки", callback_data="back_main")]
         ])
 
@@ -2030,6 +2370,107 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"• {k} — Тир {v['tier']} | {used}/{v.get('max_uses','∞')}")
         txt = "🎫 Промокоды:\n\n" + "\n".join(lines)
         await send_plain(query.message, txt, InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_admin")]]))
+        return "ADMIN_MENU"
+
+    if data == "a_referrals":
+        mirrors = load_mirrors()
+        if not mirrors:
+            await send_plain(query.message, "🪞 Зеркал пока нет.", admin_kb())
+            return "ADMIN_MENU"
+        rows = []
+        lines_txt = []
+        for pid, info in mirrors.items():
+            status = "🟢" if pid in MIRROR_APPS else "🔴"
+            bot_un = info.get("bot_username", pid)
+            nick   = info.get("nick", pid)
+            refs   = get_mirror_stats(pid)["total"]
+            rows.append([InlineKeyboardButton(
+                f"{status} @{bot_un} ({nick}) — {refs} реф.",
+                callback_data=f"a_mirror_{pid}"
+            )])
+            lines_txt.append(f"{status} @{bot_un} | {nick} | {refs} реф.")
+        rows.append([InlineKeyboardButton("◀️ Назад", callback_data="back_admin")])
+        await send_plain(
+            query.message,
+            "🪞 Зеркала и рефералы\n\n" + "\n".join(lines_txt) + "\n\nНажми на зеркало:",
+            InlineKeyboardMarkup(rows)
+        )
+        return "ADMIN_MENU"
+
+    if data.startswith("a_mirror_") and not data.startswith("a_mirror_toggle_") and not data.startswith("a_mirror_del_"):
+        pid      = data[len("a_mirror_"):]
+        mirrors  = load_mirrors()
+        info     = mirrors.get(pid, {})
+        if not info:
+            await send_plain(query.message, "❌ Зеркало не найдено.", admin_kb())
+            return "ADMIN_MENU"
+        stats    = get_mirror_stats(pid)
+        bot_un   = info.get("bot_username", "?")
+        nick     = info.get("nick", pid)
+        token    = info.get("token", "")
+        created  = info.get("created", "?")
+        active   = pid in MIRROR_APPS
+        status   = "🟢 Активно" if active else "🔴 Остановлено"
+        refs_all = load_referrals()
+        ref_list = [(uid, d) for uid, d in refs_all.items() if d.get("partner_id") == pid]
+        users_all = load_json(USERS_FILE)
+        ref_lines = []
+        for uid, d in ref_list[-5:]:
+            rn = users_all.get(uid, {}).get("nick", uid)
+            ref_lines.append(f"  • {rn} — {d.get('date','?')}") 
+        ref_txt = "\n".join(ref_lines) if ref_lines else "  нет рефералов"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "⏸ Приостановить" if active else "▶️ Запустить",
+                callback_data=f"a_mirror_toggle_{pid}"
+            )],
+            [InlineKeyboardButton("🗑 Удалить зеркало", callback_data=f"a_mirror_del_{pid}")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="a_referrals")]
+        ])
+        await send_plain(
+            query.message,
+            f"🪞 Зеркало @{bot_un}\n\n"
+            f"Партнёр: {nick} ({pid})\n"
+            f"Статус: {status}\n"
+            f"Создано: {created}\n"
+            f"Токен: {token[:12]}...\n"
+            f"Рефералов: {stats['total']}\n"
+            f"Бонусных дней: {stats['bonus_days']}\n\n"
+            f"Последние рефералы:\n{ref_txt}",
+            kb
+        )
+        return "ADMIN_MENU"
+
+    if data.startswith("a_mirror_toggle_"):
+        pid     = data[len("a_mirror_toggle_"):]
+        mirrors = load_mirrors()
+        info    = mirrors.get(pid, {})
+        if pid in MIRROR_APPS:
+            await stop_mirror_bot(pid)
+            mirrors[pid]["active"] = False
+            save_mirrors(mirrors)
+            await send_plain(query.message,
+                f"⏸ Зеркало @{info.get('bot_username','?')} приостановлено.",
+                InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"a_mirror_{pid}")]]))
+        else:
+            success = await start_mirror_bot(pid, info["token"], info.get("nick", pid))
+            mirrors[pid]["active"] = success
+            save_mirrors(mirrors)
+            msg = f"▶️ Зеркало запущено." if success else "❌ Не удалось запустить."
+            await send_plain(query.message, msg,
+                InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"a_mirror_{pid}")]]))
+        return "ADMIN_MENU"
+
+    if data.startswith("a_mirror_del_"):
+        pid     = data[len("a_mirror_del_"):]
+        mirrors = load_mirrors()
+        info    = mirrors.get(pid, {})
+        bot_un  = info.get("bot_username", pid)
+        await stop_mirror_bot(pid)
+        if pid in mirrors:
+            del mirrors[pid]
+        save_mirrors(mirrors)
+        await send_plain(query.message, f"🗑 Зеркало @{bot_un} удалено.", admin_kb())
         return "ADMIN_MENU"
 
     return "MENU"
@@ -2220,6 +2661,7 @@ def main():
 
     async def post_init(application):
         await auto_run_existing_bots()
+        await auto_run_mirrors()
 
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
 
@@ -2240,6 +2682,7 @@ def main():
             "WAIT_CODE":             [CallbackQueryHandler(pinpad_click_handler, pattern="^pin_"), CallbackQueryHandler(menu_router, pattern="^back_main$")],
             "WAIT_2FA":              [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_2fa)],
             "MODULE_INSTALL":        [CallbackQueryHandler(menu_router), MessageHandler((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
+            "WAIT_MIRROR_TOKEN":     [CallbackQueryHandler(menu_router, pattern="^back_main$|^u_partner$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_mirror_token)],
             "WAIT_TIMENICK":         [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_timenick)],
             "SONYA_CHAT":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, sonya_chat)],
             "WAIT_PROMO_ACTIVATE":   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, promo_activate)],

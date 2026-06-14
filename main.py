@@ -308,55 +308,13 @@ def _unp_format(batch: list, idx: int, total: int) -> str:
     lines.append("\n📢 @userbotcbet | 🤖 @cbet_controller_bot")
     return "\n".join(lines)
 
-async def _unp_check(client, username: str) -> bool:
-    """
-    Проверяет занятость юзернейма через ResolveUsername.
-    Если username найден — занят (False).
-    Если ошибка "not found" — свободен (True).
-    """
-    try:
-        from telethon.tl.functions.contacts import ResolveUsernameRequest
-        await client(ResolveUsernameRequest(username))
-        return False  # нашли — занят
-    except Exception as e:
-        err = str(e).lower()
-        if "username" in err and ("invalid" in err or "not found" in err or "no user" in err or "no_user" in err):
-            return True  # не нашли — свободен
-        # Другая ошибка (флуд и т.д.) — пропускаем
-        return False
-
 async def _unp_generate(tg_id: str, cfg: dict) -> list:
-    """Генерирует батч свободных юзернеймов — параллельная проверка."""
-    client  = USER_BOTS.get(tg_id)
-    length  = max(5, min(32, cfg.get("length", 8)))
-    digits  = cfg.get("digits", True)
-    count   = cfg.get("count", 5)
-
-    if not client:
-        # Нет юзербота — генерируем без проверки
-        return [f"@{_unp_gen(length, digits)} (не проверен)" for _ in range(count)]
-
-    results = []
-    batch_size = 10  # проверяем по 10 параллельно
-
-    while len(results) < count:
-        # Генерируем батч кандидатов
-        candidates = [_unp_gen(length, digits) for _ in range(batch_size)]
-
-        # Проверяем параллельно
-        tasks = [_unp_check(client, un) for un in candidates]
-        checks = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for un, free in zip(candidates, checks):
-            if free is True:
-                results.append(f"@{un}")
-                if len(results) >= count:
-                    break
-
-        # Небольшая пауза между батчами
-        await asyncio.sleep(0.3)
-
-    return results[:count]
+    """Мгновенная генерация юзернеймов без проверки занятости."""
+    length = max(5, min(32, cfg.get("length", 8)))
+    digits = cfg.get("digits", True)
+    count  = cfg.get("count", 5)
+    # Генерируем мгновенно — проверку занятости делаем через t.me/username
+    return [f"@{_unp_gen(length, digits)}" for _ in range(count)]
 
 
 async def check_subscription(bot, tg_id: str) -> bool:
@@ -1160,16 +1118,13 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Парсер юзернеймов ──
     if data == "u_unparser":
-        tg_id_int = int(tg_id)
-        if tg_id not in UNPARSER_SESSIONS:
-            UNPARSER_SESSIONS[tg_id] = {
-                "cfg": {"length": 8, "digits": True, "count": 5},
-                "history": [],
-                "current_idx": -1,
-                "running": False,
-            }
-        cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
-        await send_plain(query.message, _unp_menu_text(cfg), _unp_menu_kb(cfg))
+        # Запрашиваем пароль для доступа
+        await send_plain(query.message,
+            "🔍 Парсер юзернеймов\n\n"
+            "🔒 Введи пароль для доступа к модулю:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]))
+        context.user_data["await_unparser_pass"] = True
+        return "UNPARSER"
         return "UNPARSER"
 
     if data == "unp_noop":
@@ -2221,6 +2176,38 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
     return "MENU"
 
 
+# ─── UNPARSER PASSWORD: Проверка пароля парсера ──────────────────
+
+async def unparser_password_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+
+    if not context.user_data.get("await_unparser_pass"):
+        return "UNPARSER"
+
+    password = update.message.text.strip()
+    context.user_data.pop("await_unparser_pass", None)
+
+    if password != ADMIN_PASSWORD:
+        await send_plain(update.message,
+            "❌ Неверный пароль.\n\n"
+            "🔍 Парсер юзернеймов пока находится в разработке.\n"
+            "Следи за обновлениями на канале @userbotcbet",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]))
+        return "MENU"
+
+    # Пароль верный — открываем парсер
+    if tg_id not in UNPARSER_SESSIONS:
+        UNPARSER_SESSIONS[tg_id] = {
+            "cfg": {"length": 8, "digits": True, "count": 5},
+            "history": [],
+            "current_idx": -1,
+            "running": False,
+        }
+    cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
+    await send_plain(update.message, _unp_menu_text(cfg), _unp_menu_kb(cfg))
+    return "UNPARSER"
+
+
 # ─── WAIT_MIRROR_TOKEN: Ввод токена зеркала ──────────────────────
 
 async def wait_mirror_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2879,7 +2866,7 @@ def main():
             "WAIT_CODE":             [CallbackQueryHandler(pinpad_click_handler, pattern="^pin_"), CallbackQueryHandler(menu_router, pattern="^back_main$")],
             "WAIT_2FA":              [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_2fa)],
             "MODULE_INSTALL":        [CallbackQueryHandler(menu_router), MessageHandler((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
-            "UNPARSER":              [CallbackQueryHandler(menu_router)],
+            "UNPARSER":              [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, unparser_password_handler)],
             "WAIT_MIRROR_TOKEN":     [CallbackQueryHandler(menu_router, pattern="^back_main$|^u_partner$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_mirror_token)],
             "WAIT_TIMENICK":         [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_timenick)],
             "SONYA_CHAT":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, sonya_chat)],

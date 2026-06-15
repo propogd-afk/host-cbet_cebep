@@ -877,16 +877,20 @@ async def _show_sub_menu(msg, tg_id: str):
 # 🎮 STANDOFF 2
 # ═══════════════════════════════════════════════════════════════════
 
-SO2_FILE = os.path.join(DATA_DIR, "so2_accounts.json")
 
-def load_so2_accounts() -> dict:
+def load_so2_users() -> dict:
     return load_json(SO2_FILE) if os.path.exists(SO2_FILE) else {}
 
-def save_so2_accounts(data: dict):
+def save_so2_users(data: dict):
     save_json(SO2_FILE, data)
 
-def get_so2_account(tg_id: str) -> dict:
-    return load_so2_accounts().get(tg_id, {})
+def get_so2_user(tg_id: str) -> dict:
+    return load_so2_users().get(tg_id, {})
+
+def save_so2_user(tg_id: str, data: dict):
+    users = load_so2_users()
+    users[tg_id] = data
+    save_so2_users(users)
 
 def so2_main_kb(logged_in: bool) -> InlineKeyboardMarkup:
     if logged_in:
@@ -1446,7 +1450,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Standoff 2 ──
     if data == "u_so2":
-        acc = get_so2_account(tg_id)
+        acc = get_so2_user(tg_id)
         logged_in = bool(acc.get("so2_id"))
         if logged_in:
             nick = acc.get("nick", "—")
@@ -1500,17 +1504,17 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "SO2"
 
     if data == "so2_logout":
-        accs = load_so2_accounts()
+        accs = load_so2_users()
         if tg_id in accs:
             del accs[tg_id]
-            save_so2_accounts(accs)
+            save_so2_users(accs)
         await send_plain(query.message,
             "🚪 Ты вышел из аккаунта Standoff 2.",
             so2_main_kb(False))
         return "SO2"
 
     if data == "so2_profile":
-        acc = get_so2_account(tg_id)
+        acc = get_so2_user(tg_id)
         so2_id = acc.get("so2_id")
         if not so2_id:
             await query.answer("Сначала войди!", show_alert=True)
@@ -1538,6 +1542,15 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Standoff 2 ──
     if data == "u_so2":
+        # Проверяем пароль
+        context.user_data["so2_await_pass"] = True
+        await send_plain(query.message,
+            "🎮 Standoff 2\n\n"
+            "🔒 Введи пароль для доступа к разделу:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]))
+        return "SO2"
+
+    if data == "u_so2_enter":
         profile = get_so2_user(tg_id)
         registered = bool(profile.get("so2_id"))
         if registered:
@@ -2842,14 +2855,14 @@ async def so2_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not step:
         return "SO2"
 
-    accs = load_so2_accounts()
+    accs = load_so2_users()
 
     if step == "reg_id":
         # Сохраняем ID, спрашиваем баланс голды
         if tg_id not in accs:
             accs[tg_id] = {}
         accs[tg_id]["so2_id"] = text
-        save_so2_accounts(accs)
+        save_so2_users(accs)
         SO2_AWAIT[tg_id] = "reg_gold"
         await send_plain(update.message,
             "📝 Регистрация — Шаг 2/2\n"
@@ -2864,7 +2877,7 @@ async def so2_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tg_id not in accs:
             accs[tg_id] = {}
         accs[tg_id]["gold"] = text
-        save_so2_accounts(accs)
+        save_so2_users(accs)
         SO2_AWAIT.pop(tg_id, None)
         so2_id = accs[tg_id].get("so2_id", "—")
         # Пробуем получить ник из so2checker_bot
@@ -2877,7 +2890,7 @@ async def so2_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parts = line.split(":")
                         if len(parts) > 1:
                             accs[tg_id]["nick"] = parts[1].strip()
-                            save_so2_accounts(accs)
+                            save_so2_users(accs)
                             break
         await send_plain(update.message,
             "✅ Регистрация завершена!\n"
@@ -2892,7 +2905,7 @@ async def so2_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tg_id not in accs:
             accs[tg_id] = {}
         accs[tg_id]["so2_id"] = text
-        save_so2_accounts(accs)
+        save_so2_users(accs)
         SO2_AWAIT[tg_id] = "login_gold"
         await send_plain(update.message,
             f"🔑 ID принят: {text}\n"
@@ -2904,7 +2917,7 @@ async def so2_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tg_id not in accs:
             accs[tg_id] = {}
         accs[tg_id]["gold"] = text
-        save_so2_accounts(accs)
+        save_so2_users(accs)
         SO2_AWAIT.pop(tg_id, None)
         so2_id = accs[tg_id].get("so2_id", "—")
         await send_plain(update.message,
@@ -2915,6 +2928,52 @@ async def so2_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "SO2"
 
     SO2_AWAIT.pop(tg_id, None)
+    return "SO2"
+
+
+# ─── SO2: Пароль ──────────────────────────────────────────────────
+
+async def so2_password_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+
+    if not context.user_data.get("so2_await_pass"):
+        return await so2_input_handler(update, context)
+
+    text = update.message.text.strip()
+    context.user_data.pop("so2_await_pass", None)
+    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]])
+
+    if text != ADMIN_PASSWORD:
+        await send_plain(update.message,
+            "❌ Неверный пароль.\n\n"
+            "🎮 Standoff 2 модуль сейчас в разработке.\n"
+            "Следи за обновлениями на канале @userbotcbet",
+            back_kb)
+        return "MENU"
+
+    # Пароль верный — показываем раздел SO2
+    profile = get_so2_user(tg_id)
+    registered = bool(profile.get("so2_id"))
+    if registered:
+        so2_id = profile.get("so2_id", "—")
+        gold   = profile.get("gold", "не указан")
+        nick   = profile.get("nick", "—")
+        nick   = profile.get("nick", "—")
+        text_msg = (
+            "🎮 Standoff 2\n\n"
+            f"👤 Ник: {nick}\n"
+            f"🆔 ID: {so2_id}\n"
+            f"💰 Gold: {gold}\n\n"
+            "Выбери действие:"
+        )
+    else:
+        text_msg = (
+            "🎮 Standoff 2\n\n"
+            "Ты ещё не зарегистрирован.\n"
+            "Зарегистрируйся чтобы сохранить профиль."
+        )
+    await send_plain(update.message, text_msg, so2_main_kb(registered))
+    return "SO2"
     return "SO2"
 
 
@@ -3721,7 +3780,7 @@ def main():
             "WAIT_2FA":              [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_2fa)],
             "MODULE_INSTALL":        [CallbackQueryHandler(menu_router), MessageHandler((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
             "SO2":                   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, so2_text_handler)],
-            "SO2":                   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, so2_input_handler)],
+            "SO2":                   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, so2_password_handler)],
             "OSINT":                 [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, osint_input_handler)],
             "UNPARSER":              [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, unparser_password_handler)],
             "WAIT_MIRROR_TOKEN":     [CallbackQueryHandler(menu_router, pattern="^back_main$|^u_partner$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_mirror_token)],

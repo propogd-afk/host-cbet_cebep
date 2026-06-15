@@ -48,6 +48,7 @@ PHOTO_MENU      = os.path.join(IMAGES_DATA_DIR, "menu.jpg")
 
 PHOTO_IDS_FILE    = os.path.join(DATA_DIR, "photo_ids.json")
 MIRRORS_FILE      = os.path.join(DATA_DIR, "mirrors.json")
+SO2_FILE          = os.path.join(DATA_DIR, "so2_users.json")
 REFERRALS_FILE    = os.path.join(DATA_DIR, "referrals.json")
 STOCK_MODULES_DIR = os.path.join(DATA_DIR, "stock_modules")
 
@@ -68,6 +69,8 @@ LOADED_MODULES: dict = {}
 MIRROR_APPS: dict    = {}  # {partner_tg_id: Application} — запущенные зеркала
 UNPARSER_SESSIONS: dict = {}  # {tg_id: {cfg, history, current_idx}}
 OSINT_SESSIONS: dict    = {}  # {tg_id: {step, data}}
+SO2_WAIT: dict          = {}  # {tg_id: "register"|"gold"|"search"}
+SO2_AWAIT: dict         = {}  # {tg_id: step} — ожидание ввода SO2
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -123,6 +126,8 @@ def init_system():
         save_json(PHOTO_IDS_FILE, {})
     if not os.path.exists(MIRRORS_FILE):
         save_json(MIRRORS_FILE, {})
+    if not os.path.exists(SO2_FILE):
+        save_json(SO2_FILE, {})
     if not os.path.exists(REFERRALS_FILE):
         save_json(REFERRALS_FILE, {})
     os.makedirs(STOCK_MODULES_DIR, exist_ok=True)
@@ -407,7 +412,8 @@ def get_user_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton("🎟 Ввести код",       callback_data="u_entercode")],
         [InlineKeyboardButton("🪞 Партнёрская программа", callback_data="u_partner"),
          InlineKeyboardButton("🔍 Юзернеймы", callback_data="u_unparser")],
-        [InlineKeyboardButton("🕵️ OSINT", callback_data="u_osint")],
+        [InlineKeyboardButton("🕵️ OSINT", callback_data="u_osint"),
+         InlineKeyboardButton("🎮 Standoff 2", callback_data="u_so2")],
         [InlineKeyboardButton("🔄 Обновить", callback_data="u_refresh"),
          InlineKeyboardButton("ℹ️ Инфо", callback_data="u_info"),
          InlineKeyboardButton("❌ Выйти", callback_data="u_logout")]
@@ -865,6 +871,171 @@ async def _show_sub_menu(msg, tg_id: str):
     await msg.reply_text(text, reply_markup=kb)
 
 
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 🎮 STANDOFF 2
+# ═══════════════════════════════════════════════════════════════════
+
+SO2_FILE = os.path.join(DATA_DIR, "so2_accounts.json")
+
+def load_so2_accounts() -> dict:
+    return load_json(SO2_FILE) if os.path.exists(SO2_FILE) else {}
+
+def save_so2_accounts(data: dict):
+    save_json(SO2_FILE, data)
+
+def get_so2_account(tg_id: str) -> dict:
+    return load_so2_accounts().get(tg_id, {})
+
+def so2_main_kb(logged_in: bool) -> InlineKeyboardMarkup:
+    if logged_in:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("👤 Мой профиль", callback_data="so2_myprofile")],
+            [InlineKeyboardButton("🔍 Найти игрока", callback_data="so2_search")],
+            [InlineKeyboardButton("ℹ️ Инфо", callback_data="so2_info")],
+            [InlineKeyboardButton("🚪 Выйти", callback_data="so2_logout")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
+        ])
+    else:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 Зарегистрироваться", callback_data="so2_register")],
+            [InlineKeyboardButton("🔑 Войти", callback_data="so2_login")],
+            [InlineKeyboardButton("🔍 Найти игрока", callback_data="so2_search")],
+            [InlineKeyboardButton("ℹ️ Инфо", callback_data="so2_info")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
+        ])
+
+
+async def so2_fetch(tg_id: str, so2_id: str) -> str:
+    """Получает данные игрока через @so2checker_bot."""
+    client = USER_BOTS.get(tg_id)
+    if not client:
+        return None
+    try:
+        await client.send_message("so2checker_bot", so2_id)
+        await asyncio.sleep(5)
+        msgs = await client.get_messages("so2checker_bot", limit=2)
+        for msg in msgs:
+            if not msg.out and msg.text:
+                return msg.text
+        return None
+    except Exception as e:
+        logger.error(f"SO2 fetch error: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 🎮 STANDOFF 2
+# ═══════════════════════════════════════════════════════════════════
+
+def load_so2_users() -> dict:
+    return load_json(SO2_FILE) if os.path.exists(SO2_FILE) else {}
+
+def save_so2_users(data: dict):
+    save_json(SO2_FILE, data)
+
+def get_so2_user(tg_id: str) -> dict:
+    return load_so2_users().get(tg_id, {})
+
+def save_so2_user(tg_id: str, data: dict):
+    users = load_so2_users()
+    users[tg_id] = data
+    save_so2_users(users)
+
+def so2_main_kb(registered: bool) -> InlineKeyboardMarkup:
+    if registered:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("👤 Мой профиль", callback_data="so2_myprofile")],
+            [InlineKeyboardButton("🔍 Найти игрока", callback_data="so2_search")],
+            [InlineKeyboardButton("✏️ Изменить данные", callback_data="so2_edit")],
+            [InlineKeyboardButton("ℹ️ Инфо", callback_data="so2_info")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
+        ])
+    else:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 Зарегистрироваться", callback_data="so2_register")],
+            [InlineKeyboardButton("🔍 Найти игрока", callback_data="so2_search")],
+            [InlineKeyboardButton("ℹ️ Инфо", callback_data="so2_info")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
+        ])
+
+def _so2_clean(text: str) -> str:
+    """Убирает рекламные строки из ответа @so2checker_bot."""
+    lines = text.split("\n")
+    clean = []
+    for line in lines:
+        # Убираем строки с рекламой
+        if "Astandy" in line or "astandy" in line:
+            continue
+        if "подпишись" in line.lower():
+            continue
+        if "t.me/astandy" in line:
+            continue
+        if "Проект от" in line:
+            continue
+        clean.append(line)
+    # Убираем лишние пустые строки в конце
+    while clean and not clean[-1].strip():
+        clean.pop()
+    return "\n".join(clean)
+
+async def so2_fetch(tg_id: str, so2_id: str) -> str:
+    """Запрашивает данные через @so2checker_bot используя юзербот."""
+    from telethon.tl.functions.messages import GetBotCallbackAnswerRequest
+
+    client = USER_BOTS.get(tg_id)
+    if not client:
+        return None
+    try:
+        # Шаг 1: /start — получаем главное меню
+        await client.send_message("so2checker_bot", "/start")
+        await asyncio.sleep(2)
+
+        # Шаг 2: получаем сообщение с кнопками
+        msgs = await client.get_messages("so2checker_bot", limit=1)
+        if not msgs:
+            return None
+        msg = msgs[0]
+
+        # Шаг 3: нажимаем ПЕРВУЮ кнопку (получить информацию об игроке)
+        clicked = False
+        if msg.reply_markup:
+            first_btn = None
+            for row in msg.reply_markup.rows:
+                for btn in row.buttons:
+                    first_btn = btn
+                    break
+                if first_btn:
+                    break
+            if first_btn and hasattr(first_btn, "data"):
+                try:
+                    await client(GetBotCallbackAnswerRequest(
+                        peer="so2checker_bot",
+                        msg_id=msg.id,
+                        data=first_btn.data
+                    ))
+                    clicked = True
+                except Exception as e:
+                    logger.warning(f"SO2 button click error: {e}")
+
+        await asyncio.sleep(2)
+
+        # Шаг 4: отправляем ID
+        await client.send_message("so2checker_bot", so2_id)
+        await asyncio.sleep(5)
+
+        # Шаг 5: читаем ответ — ищем сообщение с данными профиля
+        msgs2 = await client.get_messages("so2checker_bot", limit=5)
+        for m in msgs2:
+            if not m.out and m.text and len(m.text) > 50:
+                return _so2_clean(m.text)
+
+        return None
+    except Exception as e:
+        logger.error(f"SO2 fetch error: {e}")
+        return None
+
 # ═══════════════════════════════════════════════════════════════════
 # 🕵️ OSINT ОРГАНАЙЗЕР
 # ═══════════════════════════════════════════════════════════════════
@@ -1272,6 +1443,193 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MENU"
 
     # ── Юзер-кнопки ──
+
+    # ── Standoff 2 ──
+    if data == "u_so2":
+        acc = get_so2_account(tg_id)
+        logged_in = bool(acc.get("so2_id"))
+        if logged_in:
+            nick = acc.get("nick", "—")
+            so2id = acc.get("so2_id", "—")
+            gold = acc.get("gold", "—")
+            text = f"🎮 Standoff 2\n\n👤 Ник: {nick}\n🆔 ID: {so2id}\n💰 Баланс голды: {gold}\n\nВыбери действие:"
+        else:
+            text = "🎮 Standoff 2\n\nТы не вошёл в аккаунт.\n\nЗарегистрируйся или войди чтобы видеть\nсвой профиль и баланс голды."
+        await send_plain(query.message, text, so2_main_kb(logged_in))
+        return "SO2"
+
+    if data == "so2_info":
+        info_text = (
+            "Standoff 2 — модуль\n\n"
+            "Что умеет:\n"
+            "- Сохраняй свой профиль (ник, ID, баланс голды)\n"
+            "- Ищи любого игрока по SO2 ID\n"
+            "- Статистика: ранг, время в игре, дата рег.\n\n"
+            "Как найти свой ID:\n"
+            "1. Открой Standoff 2\n"
+            "2. Нажми на аватар (левый верхний угол)\n"
+            "3. ID под никнеймом\n\n"
+            "@userbotcbet | @cbet_controller_bot"
+        )
+        await send_plain(query.message, info_text,
+            InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="u_so2")]]))
+        return "SO2"
+
+    if data == "so2_reg":
+        SO2_AWAIT[tg_id] = "reg_id"
+        await send_plain(query.message,
+            "📝 Регистрация — Шаг 1/2\n"
+            "Введи свой Standoff 2 ID:\n"
+            "(Найти в профиле игры под никнеймом)",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        return "SO2"
+
+    if data == "so2_login":
+        SO2_AWAIT[tg_id] = "login_id"
+        await send_plain(query.message,
+            "🔑 Вход — введи свой Standoff 2 ID:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        return "SO2"
+
+    if data == "so2_edit":
+        SO2_AWAIT[tg_id] = "reg_id"
+        await send_plain(query.message,
+            "✏️ Изменение данных — Шаг 1/2\n"
+            "Введи новый Standoff 2 ID:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        return "SO2"
+
+    if data == "so2_logout":
+        accs = load_so2_accounts()
+        if tg_id in accs:
+            del accs[tg_id]
+            save_so2_accounts(accs)
+        await send_plain(query.message,
+            "🚪 Ты вышел из аккаунта Standoff 2.",
+            so2_main_kb(False))
+        return "SO2"
+
+    if data == "so2_profile":
+        acc = get_so2_account(tg_id)
+        so2_id = acc.get("so2_id")
+        if not so2_id:
+            await query.answer("Сначала войди!", show_alert=True)
+            return "SO2"
+        if tg_id not in USER_BOTS:
+            await send_plain(query.message,
+                "⚠️ Юзербот не запущен. Нажми /start.",
+                InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
+            return "SO2"
+        await send_plain(query.message, "⏳ Загружаю профиль...", None)
+        result = await so2_fetch(tg_id, so2_id)
+        if result:
+            gold = acc.get("gold", "не указан")
+            await query.message.reply_text(
+                f"🎮 Мой профиль Standoff 2\n"
+                f"{result}\n"
+                f"💰 Мой баланс голды: {gold}\n"
+                f"📢 @userbotcbet",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
+        else:
+            await query.message.reply_text(
+                "❌ Не удалось получить данные. Попробуй позже.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
+        return "SO2"
+
+    # ── Standoff 2 ──
+    if data == "u_so2":
+        profile = get_so2_user(tg_id)
+        registered = bool(profile.get("so2_id"))
+        if registered:
+            nick  = profile.get("nick", "—")
+            so2id = profile.get("so2_id", "—")
+            gold  = profile.get("gold", "не указан")
+            text = (
+                "🎮 Standoff 2\n\n"
+                f"👤 Ник: {nick}\n"
+                f"🆔 ID: {so2id}\n"
+                f"💰 Баланс Gold: {gold}\n\n"
+                "Выбери действие:"
+            )
+        else:
+            text = (
+                "🎮 Standoff 2\n\n"
+                "Ты ещё не зарегистрирован.\n"
+                "Зарегистрируйся чтобы сохранить профиль\n"
+                "и быстро смотреть статистику.\n\n"
+                "Или сразу ищи игрока по ID."
+            )
+        await send_plain(query.message, text, so2_main_kb(registered))
+        return "SO2"
+
+    if data == "so2_info":
+        await send_plain(query.message,
+            "Standoff 2 — модуль\n\n"
+            "Что умеет:\n"
+            "- Сохраняй профиль (ник, ID, баланс голды)\n"
+            "- Ищи игрока по SO2 ID\n"
+            "- Статистика: ранг, время, дата рег.\n\n"
+            "Как найти свой ID:\n"
+            "1. Открой Standoff 2\n"
+            "2. Нажми на аватар (верхний левый угол)\n"
+            "3. ID под никнеймом\n\n"
+            "@userbotcbet | @cbet_controller_bot",
+            InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="u_so2")]]))
+        return "SO2"
+
+    if data == "so2_register":
+        context.user_data["so2_step"] = "nick"
+        context.user_data["so2_data"] = {}
+        await send_plain(query.message,
+            "📝 Регистрация — Шаг 1/3\n"
+            "Введи свой никнейм в Standoff 2:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        return "SO2"
+
+    if data == "so2_edit":
+        context.user_data["so2_step"] = "nick"
+        context.user_data["so2_data"] = {}
+        await send_plain(query.message,
+            "✏️ Изменение данных — Шаг 1/3\n"
+            "Введи свой никнейм в Standoff 2:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        return "SO2"
+
+    if data == "so2_search":
+        context.user_data["so2_step"] = "search"
+        await send_plain(query.message,
+            "🔍 Поиск игрока\n"
+            "Введи Standoff 2 ID игрока:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        return "SO2"
+
+    if data == "so2_myprofile":
+        profile = get_so2_user(tg_id)
+        so2_id  = profile.get("so2_id")
+        if not so2_id:
+            await query.answer("Сначала зарегистрируйся!", show_alert=True)
+            return "SO2"
+        if tg_id not in USER_BOTS:
+            await send_plain(query.message,
+                "⚠️ Юзербот не запущен. Нажми Обновить или /start.",
+                InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
+            return "SO2"
+        await query.message.reply_text("⏳ Загружаю профиль...")
+        result = await so2_fetch(tg_id, so2_id)
+        gold = profile.get("gold", "не указан")
+        nick = profile.get("nick", "—")
+        if result:
+            await query.message.reply_text(
+                f"Мой профиль Standoff 2\n\n"
+                f"Ник: {nick}\n"
+                f"Gold: {gold}\n\n"
+                f"{result}\n\n"
+                "@userbotcbet",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="u_so2")]]))
+            await query.message.reply_text(
+                "❌ Не удалось получить данные. Попробуй позже.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
+        return "SO2"
 
     # ── OSINT Органайзер ──
     if data == "u_osint":
@@ -2473,6 +2831,162 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
     return "MENU"
 
 
+# ─── SO2: Ввод данных ────────────────────────────────────────────
+
+async def so2_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+    text  = update.message.text.strip()
+    step  = SO2_AWAIT.get(tg_id)
+    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]])
+
+    if not step:
+        return "SO2"
+
+    accs = load_so2_accounts()
+
+    if step == "reg_id":
+        # Сохраняем ID, спрашиваем баланс голды
+        if tg_id not in accs:
+            accs[tg_id] = {}
+        accs[tg_id]["so2_id"] = text
+        save_so2_accounts(accs)
+        SO2_AWAIT[tg_id] = "reg_gold"
+        await send_plain(update.message,
+            "📝 Регистрация — Шаг 2/2\n"
+            f"ID сохранён: {text}\n"
+            "Теперь введи свой баланс голды (Gold):\n"
+            "(Найти в профиле игры)",
+            back_kb)
+        return "SO2"
+
+    elif step == "reg_gold":
+        # Сохраняем баланс голды
+        if tg_id not in accs:
+            accs[tg_id] = {}
+        accs[tg_id]["gold"] = text
+        save_so2_accounts(accs)
+        SO2_AWAIT.pop(tg_id, None)
+        so2_id = accs[tg_id].get("so2_id", "—")
+        # Пробуем получить ник из so2checker_bot
+        if tg_id in USER_BOTS:
+            result = await so2_fetch(tg_id, so2_id)
+            if result:
+                # Парсим ник из ответа бота
+                for line in result.split("\n"):
+                    if "Никнейм" in line or "Ник" in line:
+                        parts = line.split(":")
+                        if len(parts) > 1:
+                            accs[tg_id]["nick"] = parts[1].strip()
+                            save_so2_accounts(accs)
+                            break
+        await send_plain(update.message,
+            "✅ Регистрация завершена!\n"
+            f"🆔 ID: {so2_id}\n"
+            f"💰 Баланс голды: {text}\n"
+            "Теперь можешь смотреть свой профиль!",
+            so2_main_kb(True))
+        return "SO2"
+
+    elif step == "login_id":
+        # Вход по ID
+        if tg_id not in accs:
+            accs[tg_id] = {}
+        accs[tg_id]["so2_id"] = text
+        save_so2_accounts(accs)
+        SO2_AWAIT[tg_id] = "login_gold"
+        await send_plain(update.message,
+            f"🔑 ID принят: {text}\n"
+            "Введи свой баланс голды:",
+            back_kb)
+        return "SO2"
+
+    elif step == "login_gold":
+        if tg_id not in accs:
+            accs[tg_id] = {}
+        accs[tg_id]["gold"] = text
+        save_so2_accounts(accs)
+        SO2_AWAIT.pop(tg_id, None)
+        so2_id = accs[tg_id].get("so2_id", "—")
+        await send_plain(update.message,
+            "✅ Вход выполнен!\n"
+            f"🆔 ID: {so2_id}\n"
+            f"💰 Баланс голды: {text}",
+            so2_main_kb(True))
+        return "SO2"
+
+    SO2_AWAIT.pop(tg_id, None)
+    return "SO2"
+
+
+# ─── SO2: Ввод данных ─────────────────────────────────────────────
+
+async def so2_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+    text  = update.message.text.strip()
+    step  = context.user_data.get("so2_step")
+    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]])
+
+    if not step:
+        return "SO2"
+
+    # Поиск игрока
+    if step == "search":
+        context.user_data.pop("so2_step", None)
+        if tg_id not in USER_BOTS:
+            await send_plain(update.message,
+                "⚠️ Юзербот не запущен. Нажми Обновить или /start.", back_kb)
+            return "SO2"
+        msg = await update.message.reply_text(f"⏳ Ищу игрока {text}...")
+        result = await so2_fetch(tg_id, text)
+        if result:
+            await msg.edit_text(
+                f"Профиль игрока:\n\n{result}\n\n@userbotcbet",
+                reply_markup=back_kb)
+        else:
+            await msg.edit_text(
+                "Игрок не найден или ошибка. Проверь ID.", reply_markup=back_kb)
+        return "SO2"
+
+    # Регистрация — шаг 1: ник
+    if step == "nick":
+        context.user_data["so2_data"]["nick"] = text
+        context.user_data["so2_step"] = "id"
+        await send_plain(update.message,
+            "📝 Регистрация — Шаг 2/3\n"
+            "Введи свой Standoff 2 ID:\n"
+            "(Найти в профиле игры под никнеймом)",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        return "SO2"
+
+    # Регистрация — шаг 2: ID
+    if step == "id":
+        context.user_data["so2_data"]["so2_id"] = text
+        context.user_data["so2_step"] = "gold"
+        await send_plain(update.message,
+            "📝 Регистрация — Шаг 3/3\n"
+            "Введи свой баланс Gold в Standoff 2:\n"
+            "(Например: 1500 или 0)",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        return "SO2"
+
+    # Регистрация — шаг 3: gold
+    if step == "gold":
+        context.user_data["so2_data"]["gold"] = text
+        data = context.user_data.pop("so2_data", {})
+        context.user_data.pop("so2_step", None)
+        save_so2_user(tg_id, data)
+        await send_plain(update.message,
+            f"Профиль сохранён!\n\n"
+            f"Ник: {data.get('nick', '?')}\n"
+            f"ID: {data.get('so2_id', '?')}\n"
+            f"Gold: {data.get('gold', '?')}\n\n"
+            "Теперь можешь смотреть статистику.",
+            InlineKeyboardMarkup([[InlineKeyboardButton("Открыть SO2", callback_data="u_so2")]]))
+        return "SO2"
+
+    return "SO2"
+
+
 # ─── OSINT: Ввод данных расследования ────────────────────────────
 
 async def osint_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3206,6 +3720,8 @@ def main():
             "WAIT_CODE":             [CallbackQueryHandler(pinpad_click_handler, pattern="^pin_"), CallbackQueryHandler(menu_router, pattern="^back_main$")],
             "WAIT_2FA":              [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_2fa)],
             "MODULE_INSTALL":        [CallbackQueryHandler(menu_router), MessageHandler((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
+            "SO2":                   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, so2_text_handler)],
+            "SO2":                   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, so2_input_handler)],
             "OSINT":                 [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, osint_input_handler)],
             "UNPARSER":              [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, unparser_password_handler)],
             "WAIT_MIRROR_TOKEN":     [CallbackQueryHandler(menu_router, pattern="^back_main$|^u_partner$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_mirror_token)],

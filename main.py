@@ -127,7 +127,13 @@ def init_system():
     if not os.path.exists(MIRRORS_FILE):
         save_json(MIRRORS_FILE, {})
     if not os.path.exists(SO2_FILE):
-        save_json(SO2_FILE, {})
+        # Миграция из старого файла so2_accounts.json
+        old_file = os.path.join(DATA_DIR, "so2_accounts.json")
+        if os.path.exists(old_file):
+            import shutil
+            shutil.copy(old_file, SO2_FILE)
+        else:
+            save_json(SO2_FILE, {})
     if not os.path.exists(REFERRALS_FILE):
         save_json(REFERRALS_FILE, {})
     os.makedirs(STOCK_MODULES_DIR, exist_ok=True)
@@ -1489,9 +1495,10 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "SO2"
 
     if data == "so2_login":
-        SO2_AWAIT[tg_id] = "login_id"
+        context.user_data["so2_step"] = "login_id"
+        context.user_data["so2_data"] = {}
         await send_plain(query.message,
-            "🔑 Вход — введи свой Standoff 2 ID:",
+            "🔑 Вход — Шаг 1/2\n\nВведи свой Standoff 2 ID:",
             InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
         return "SO2"
 
@@ -3004,6 +3011,31 @@ async def so2_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await msg.edit_text(
                 "Игрок не найден или ошибка. Проверь ID.", reply_markup=back_kb)
+        return "SO2"
+
+    # Вход — шаг 1: ID
+    if step == "login_id":
+        context.user_data["so2_data"]["so2_id"] = text
+        context.user_data["so2_step"] = "login_pass"
+        await send_plain(update.message,
+            "🔑 Вход — Шаг 2/2\n\nВведи пароль от аккаунта SO2:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        return "SO2"
+
+    # Вход — шаг 2: пароль
+    if step == "login_pass":
+        so2_id   = context.user_data.get("so2_data", {}).get("so2_id", "")
+        password = text
+        context.user_data.pop("so2_step", None)
+        context.user_data.pop("so2_data", None)
+        # Сохраняем профиль
+        save_so2_user(tg_id, {"so2_id": so2_id, "password": password, "nick": "", "gold": ""})
+        await send_plain(update.message,
+            f"✅ Вход выполнен!\n\n"
+            f"🆔 ID: {so2_id}\n"
+            f"🔑 Пароль: {password}\n\n"
+            "Теперь можешь смотреть профиль через Мой профиль",
+            InlineKeyboardMarkup([[InlineKeyboardButton("🎮 Открыть SO2", callback_data="u_so2_enter")]]))
         return "SO2"
 
     # Регистрация — шаг 1: ник

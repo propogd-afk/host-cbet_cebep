@@ -446,11 +446,24 @@ def _get_photo_key(photo_path: str) -> str:
     return os.path.basename(photo_path).replace(".jpg", "")
 
 async def send_photo(msg, photo_path: str, caption: str, reply_markup):
-    """Отправляет фото по file_id или с диска. Без ParseMode — только plain text."""
+    """Редактирует или отправляет фото. Если сообщение с фото — редактирует медиа."""
+    from telegram import InputMediaPhoto
     photo_ids = load_json(PHOTO_IDS_FILE)
     key = _get_photo_key(photo_path)
     file_id = photo_ids.get(key)
 
+    # Пробуем отредактировать существующее сообщение
+    if file_id:
+        try:
+            await msg.edit_media(
+                media=InputMediaPhoto(media=file_id, caption=caption),
+                reply_markup=reply_markup
+            )
+            return
+        except Exception:
+            pass  # не получилось — отправим новое
+
+    # Отправляем новое фото
     if file_id:
         try:
             await msg.reply_photo(photo=file_id, caption=caption, reply_markup=reply_markup)
@@ -468,16 +481,22 @@ async def send_photo(msg, photo_path: str, caption: str, reply_markup):
         except Exception as e:
             logger.error(f"Ошибка отправки файла {photo_path}: {e}")
 
-    # Fallback — текст без фото, без Markdown (чтобы не сломалось)
-    await msg.reply_text(caption, reply_markup=reply_markup)
+    # Fallback — текст без фото
+    try:
+        await msg.edit_text(caption, reply_markup=reply_markup)
+    except Exception:
+        await msg.reply_text(caption, reply_markup=reply_markup)
 
 async def send_md(msg, text: str, reply_markup):
     """Отправляет текст с Markdown. Только для текстов без юзерских данных."""
     await msg.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def send_plain(msg, text: str, reply_markup):
-    """Отправляет plain text — для текстов с юзерскими данными (ник, телефон)."""
-    await msg.reply_text(text, reply_markup=reply_markup)
+    """Отправляет или редактирует plain text сообщение."""
+    try:
+        await msg.edit_text(text, reply_markup=reply_markup)
+    except Exception:
+        await msg.reply_text(text, reply_markup=reply_markup)
 
 
 # ═══════════════════════════════════════════════════════════════════

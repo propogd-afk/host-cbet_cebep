@@ -911,8 +911,6 @@ def so2_main_kb(logged_in: bool) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("📝 Зарегистрироваться", callback_data="so2_register")],
             [InlineKeyboardButton("🔑 Войти", callback_data="so2_login")],
-            [InlineKeyboardButton("🔍 Найти игрока", callback_data="so2_search")],
-            [InlineKeyboardButton("ℹ️ Инфо", callback_data="so2_info")],
             [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
         ])
 
@@ -1495,10 +1493,10 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "SO2"
 
     if data == "so2_login":
-        context.user_data["so2_step"] = "login_id"
+        context.user_data["so2_step"] = "login_nick"
         context.user_data["so2_data"] = {}
         await send_plain(query.message,
-            "🔑 Вход — Шаг 1/2\n\nВведи свой Standoff 2 ID:",
+            "🔑 Вход — Шаг 1/2\n\nВведи свой никнейм в Standoff 2:",
             InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
         return "SO2"
 
@@ -1601,8 +1599,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["so2_step"] = "nick"
         context.user_data["so2_data"] = {}
         await send_plain(query.message,
-            "📝 Регистрация — Шаг 1/3\n"
-            "Введи свой никнейм в Standoff 2:",
+            "📝 Регистрация — Шаг 1/2\n\nВведи свой никнейм в Standoff 2:",
             InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
         return "SO2"
 
@@ -1634,22 +1631,22 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⚠️ Юзербот не запущен. Нажми Обновить или /start.",
                 InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
             return "SO2"
-        await query.message.reply_text("⏳ Загружаю профиль...")
+        msg = await query.message.reply_text("⏳ Загружаю профиль...")
         result = await so2_fetch(tg_id, so2_id)
-        gold = profile.get("gold", "не указан")
+        gold = profile.get("gold", "")
         nick = profile.get("nick", "—")
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]])
         if result:
-            await query.message.reply_text(
-                f"Мой профиль Standoff 2\n\n"
-                f"Ник: {nick}\n"
-                f"Gold: {gold}\n\n"
-                f"{result}\n\n"
-                "@userbotcbet",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="u_so2")]]))
-            await query.message.reply_text(
+            await msg.edit_text(
+                f"🎮 Мой профиль Standoff 2\n\n"
+                f"👤 Ник: {nick}\n"
+                f"🆔 ID: {so2_id}\n\n"
+                f"{result}",
+                reply_markup=back_kb)
+        else:
+            await msg.edit_text(
                 "❌ Не удалось получить данные. Попробуй позже.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
-        return "SO2"
+                reply_markup=back_kb)
 
     # ── OSINT Органайзер ──
     if data == "u_osint":
@@ -3013,27 +3010,26 @@ async def so2_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Игрок не найден или ошибка. Проверь ID.", reply_markup=back_kb)
         return "SO2"
 
-    # Вход — шаг 1: ID
-    if step == "login_id":
-        context.user_data["so2_data"]["so2_id"] = text
-        context.user_data["so2_step"] = "login_pass"
+    # Вход — шаг 1: ник
+    if step == "login_nick":
+        context.user_data["so2_data"]["nick"] = text
+        context.user_data["so2_step"] = "login_id"
         await send_plain(update.message,
-            "🔑 Вход — Шаг 2/2\n\nВведи пароль от аккаунта SO2:",
+            "🔑 Вход — Шаг 2/2\n\nВведи свой Standoff 2 ID:",
             InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
         return "SO2"
 
-    # Вход — шаг 2: пароль
-    if step == "login_pass":
-        so2_id   = context.user_data.get("so2_data", {}).get("so2_id", "")
-        password = text
+    # Вход — шаг 2: ID
+    if step == "login_id":
+        nick  = context.user_data.get("so2_data", {}).get("nick", "")
+        so2_id = text
         context.user_data.pop("so2_step", None)
         context.user_data.pop("so2_data", None)
-        # Сохраняем профиль
-        save_so2_user(tg_id, {"so2_id": so2_id, "password": password, "nick": "", "gold": ""})
+        save_so2_user(tg_id, {"so2_id": so2_id, "nick": nick, "gold": ""})
         await send_plain(update.message,
             f"✅ Вход выполнен!\n\n"
-            f"🆔 ID: {so2_id}\n"
-            f"🔑 Пароль: {password}\n\n"
+            f"👤 Ник: {nick}\n"
+            f"🆔 ID: {so2_id}\n\n"
             "Теперь можешь смотреть профиль через Мой профиль",
             InlineKeyboardMarkup([[InlineKeyboardButton("🎮 Открыть SO2", callback_data="u_so2_enter")]]))
         return "SO2"
@@ -3043,26 +3039,14 @@ async def so2_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["so2_data"]["nick"] = text
         context.user_data["so2_step"] = "id"
         await send_plain(update.message,
-            "📝 Регистрация — Шаг 2/3\n"
-            "Введи свой Standoff 2 ID:\n"
-            "(Найти в профиле игры под никнеймом)",
+            "📝 Регистрация — Шаг 2/2\n\nВведи свой Standoff 2 ID:\n(Найти в профиле игры под никнеймом)",
             InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
         return "SO2"
 
-    # Регистрация — шаг 2: ID
+    # Регистрация — шаг 2: ID → сохраняем
     if step == "id":
         context.user_data["so2_data"]["so2_id"] = text
-        context.user_data["so2_step"] = "gold"
-        await send_plain(update.message,
-            "📝 Регистрация — Шаг 3/3\n"
-            "Введи свой баланс Gold в Standoff 2:\n"
-            "(Например: 1500 или 0)",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
-        return "SO2"
-
-    # Регистрация — шаг 3: gold
-    if step == "gold":
-        context.user_data["so2_data"]["gold"] = text
+        context.user_data["so2_data"]["gold"] = ""
         data = context.user_data.pop("so2_data", {})
         context.user_data.pop("so2_step", None)
         save_so2_user(tg_id, data)

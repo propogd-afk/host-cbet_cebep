@@ -67,6 +67,7 @@ USER_BOTS: dict      = {}
 LOADED_MODULES: dict = {}
 MIRROR_APPS: dict    = {}  # {partner_tg_id: Application} — запущенные зеркала
 UNPARSER_SESSIONS: dict = {}  # {tg_id: {cfg, history, current_idx}}
+OSINT_SESSIONS: dict    = {}  # {tg_id: {step, data}}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -406,6 +407,7 @@ def get_user_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton("🎟 Ввести код",       callback_data="u_entercode")],
         [InlineKeyboardButton("🪞 Партнёрская программа", callback_data="u_partner"),
          InlineKeyboardButton("🔍 Юзернеймы", callback_data="u_unparser")],
+        [InlineKeyboardButton("🕵️ OSINT", callback_data="u_osint")],
         [InlineKeyboardButton("🔄 Обновить", callback_data="u_refresh"),
          InlineKeyboardButton("ℹ️ Инфо", callback_data="u_info"),
          InlineKeyboardButton("❌ Выйти", callback_data="u_logout")]
@@ -862,6 +864,96 @@ async def _show_sub_menu(msg, tg_id: str):
     ])
     await msg.reply_text(text, reply_markup=kb)
 
+
+# ═══════════════════════════════════════════════════════════════════
+# 🕵️ OSINT ОРГАНАЙЗЕР
+# ═══════════════════════════════════════════════════════════════════
+
+OSINT_FIELDS = [
+    ("investigator",  "👤 Имя следователя (ты)",           False),
+    ("target_name",   "🎯 Имя/псевдоним жертвы",           False),
+    ("target_phone",  "📱 Номер телефона жертвы",          True),
+    ("target_tg",     "💬 Telegram жертвы (@username)",    True),
+    ("target_vk",     "🔵 VK жертвы (ссылка или @id)",    True),
+    ("target_inst",   "📸 Instagram жертвы (@username)",   True),
+    ("target_tiktok", "🎵 TikTok жертвы (@username)",     True),
+    ("target_email",  "📧 Email жертвы",                   True),
+    ("target_addr",   "🏠 Адрес жертвы",                  True),
+    ("target_tz",     "🌍 Часовой пояс жертвы",           True),
+    ("target_ip",     "🌐 IP адрес жертвы",               True),
+    ("target_links",  "🔗 Доп. ссылки/аккаунты",         True),
+    ("notes",         "📝 Заметки и доп. информация",     True),
+]
+# (ключ, описание, можно_пропустить)
+
+def _osint_step_text(step: int, data: dict) -> str:
+    """Текст текущего шага."""
+    _, desc, skippable = OSINT_FIELDS[step]
+    skip_txt = " (или /skip чтобы пропустить)" if skippable else ""
+    progress = f"[{step+1}/{len(OSINT_FIELDS)}]"
+    return (
+        f"🕵️ OSINT Органайзер {progress}\n\n"
+        f"Введи {desc}{skip_txt}:"
+    )
+
+def _osint_skip_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏭ Пропустить", callback_data="osint_skip")],
+        [InlineKeyboardButton("❌ Отменить", callback_data="back_main")],
+    ])
+
+def _osint_required_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Отменить", callback_data="back_main")],
+    ])
+
+def _osint_build_tree(data: dict) -> str:
+    """Строит красивое дерево OSINT данных."""
+    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    inv  = data.get("investigator", "Неизвестно")
+    name = data.get("target_name", "Неизвестно")
+
+    lines = [
+        f"🕵️ OSINT РАССЛЕДОВАНИЕ",
+        f"━━━━━━━━━━━━━━━━━━━━━━",
+        f"📋 Следователь: {inv}",
+        f"📅 Дата: {now}",
+        f"━━━━━━━━━━━━━━━━━━━━━━",
+        f"",
+        f"🎯 ОБЪЕКТ: {name}",
+        f"│",
+    ]
+
+    fields_map = {
+        "target_phone":  ("📱", "Телефон"),
+        "target_tg":     ("💬", "Telegram"),
+        "target_vk":     ("🔵", "VK"),
+        "target_inst":   ("📸", "Instagram"),
+        "target_tiktok": ("🎵", "TikTok"),
+        "target_email":  ("📧", "Email"),
+        "target_addr":   ("🏠", "Адрес"),
+        "target_tz":     ("🌍", "Часовой пояс"),
+        "target_ip":     ("🌐", "IP"),
+        "target_links":  ("🔗", "Доп. ссылки"),
+        "notes":         ("📝", "Заметки"),
+    }
+
+    items = [(k, emoji, label) for k, (emoji, label) in fields_map.items() if data.get(k)]
+    for i, (key, emoji, label) in enumerate(items):
+        is_last = (i == len(items) - 1)
+        branch = "└──" if is_last else "├──"
+        lines.append(f"{branch} {emoji} {label}: {data[key]}")
+
+    if not items:
+        lines.append("└── ⚠️ Нет данных")
+
+    lines += [
+        f"",
+        f"━━━━━━━━━━━━━━━━━━━━━━",
+        f"📢 @userbotcbet | 🤖 @cbet_controller_bot",
+    ]
+    return "\n".join(lines)
+
 # ── Проверка подписки на канал ────────────────────────────────────
 
 async def check_subscription(bot, user_id: int) -> bool:
@@ -1180,6 +1272,45 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MENU"
 
     # ── Юзер-кнопки ──
+
+    # ── OSINT Органайзер ──
+    if data == "u_osint":
+        OSINT_SESSIONS[tg_id] = {"step": 0, "data": {}}
+        step_text = _osint_step_text(0, {})
+        _, _, skippable = OSINT_FIELDS[0]
+        kb = _osint_skip_kb() if skippable else _osint_required_kb()
+        await send_plain(query.message, step_text, kb)
+        return "OSINT"
+
+    if data == "osint_skip":
+        if tg_id not in OSINT_SESSIONS:
+            return "MENU"
+        sess = OSINT_SESSIONS[tg_id]
+        step = sess["step"]
+        _, _, skippable = OSINT_FIELDS[step]
+        if not skippable:
+            await query.answer("Это поле обязательное!", show_alert=True)
+            return "OSINT"
+        step += 1
+        if step >= len(OSINT_FIELDS):
+            tree = _osint_build_tree(sess["data"])
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💾 Сохранить (скопируй)", callback_data="osint_done")],
+                [InlineKeyboardButton("🔄 Новое расследование", callback_data="u_osint")],
+                [InlineKeyboardButton("◀️ В меню", callback_data="back_main")],
+            ])
+            await send_plain(query.message, tree, kb)
+            del OSINT_SESSIONS[tg_id]
+            return "MENU"
+        sess["step"] = step
+        _, _, skippable_next = OSINT_FIELDS[step]
+        kb = _osint_skip_kb() if skippable_next else _osint_required_kb()
+        await send_plain(query.message, _osint_step_text(step, sess["data"]), kb)
+        return "OSINT"
+
+    if data == "osint_done":
+        await query.answer("✅ Скопируй текст выше!", show_alert=True)
+        return "MENU"
 
     # ── Парсер юзернеймов ──
     if data == "u_unparser":
@@ -2342,6 +2473,49 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
     return "MENU"
 
 
+# ─── OSINT: Ввод данных расследования ────────────────────────────
+
+async def osint_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+    text  = update.message.text.strip()
+
+    if tg_id not in OSINT_SESSIONS:
+        return "MENU"
+
+    sess = OSINT_SESSIONS[tg_id]
+    step = sess["step"]
+
+    # Пропуск через /skip
+    if text.lower() == "/skip":
+        _, _, skippable = OSINT_FIELDS[step]
+        if not skippable:
+            await send_plain(update.message, "⚠️ Это поле обязательное, его нельзя пропустить.", _osint_required_kb())
+            return "OSINT"
+        step += 1
+    else:
+        key = OSINT_FIELDS[step][0]
+        sess["data"][key] = text
+        step += 1
+
+    # Если все поля заполнены — строим дерево
+    if step >= len(OSINT_FIELDS):
+        tree = _osint_build_tree(sess["data"])
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Новое расследование", callback_data="u_osint")],
+            [InlineKeyboardButton("◀️ В меню", callback_data="back_main")],
+        ])
+        await send_plain(update.message, tree, kb)
+        del OSINT_SESSIONS[tg_id]
+        return "MENU"
+
+    # Следующий шаг
+    sess["step"] = step
+    _, _, skippable = OSINT_FIELDS[step]
+    kb = _osint_skip_kb() if skippable else _osint_required_kb()
+    await send_plain(update.message, _osint_step_text(step, sess["data"]), kb)
+    return "OSINT"
+
+
 # ─── UNPARSER PASSWORD: Проверка пароля парсера ──────────────────
 
 async def unparser_password_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3032,6 +3206,7 @@ def main():
             "WAIT_CODE":             [CallbackQueryHandler(pinpad_click_handler, pattern="^pin_"), CallbackQueryHandler(menu_router, pattern="^back_main$")],
             "WAIT_2FA":              [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_2fa)],
             "MODULE_INSTALL":        [CallbackQueryHandler(menu_router), MessageHandler((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
+            "OSINT":                 [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, osint_input_handler)],
             "UNPARSER":              [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, unparser_password_handler)],
             "WAIT_MIRROR_TOKEN":     [CallbackQueryHandler(menu_router, pattern="^back_main$|^u_partner$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_mirror_token)],
             "WAIT_TIMENICK":         [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_timenick)],

@@ -18,17 +18,13 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-# ═══════════════════════════════════════════════════════════════════
-# 🛠 БЛОК ИНИЦИАЛИЗАЦИИ И ГЛОБАЛЬНЫХ ПЕРЕМЕННЫХ
-# ═══════════════════════════════════════════════════════════════════
-
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "ТВОЙ_ТОКЕН_БОТА")
 ADMIN_PASSWORD = "uretracoin"
-ADMIN_TG_ID    = "1837883882"  # tg_id админа для уведомлений
-CHANNEL_ID     = "@userbotcbet"  # канал для обязательной подписки
+ADMIN_TG_ID    = "1837883882"
+CHANNEL_ID     = "@userbotcbet"
 CHANNEL_URL    = "https://t.me/userbotcbet"
-MAX_MIRRORS    = 10  # максимум зеркал одновременно
-CHANNEL_USERNAME = "userbotcbet"  # канал для обязательной подписки
+MAX_MIRRORS    = 10
+CHANNEL_USERNAME = "userbotcbet"
 
 BASE_DIR    = "/app"
 DATA_DIR    = os.path.join(BASE_DIR, "data")
@@ -66,16 +62,12 @@ _file_lock = asyncio.Lock()
 
 USER_BOTS: dict      = {}
 LOADED_MODULES: dict = {}
-MIRROR_APPS: dict    = {}  # {partner_tg_id: Application} — запущенные зеркала
-UNPARSER_SESSIONS: dict = {}  # {tg_id: {cfg, history, current_idx}}
-OSINT_SESSIONS: dict    = {}  # {tg_id: {step, data}}
-SO2_WAIT: dict          = {}  # {tg_id: "register"|"gold"|"search"}
-SO2_AWAIT: dict         = {}  # {tg_id: step} — ожидание ввода SO2
+MIRROR_APPS: dict    = {}
+UNPARSER_SESSIONS: dict = {}
+OSINT_SESSIONS: dict    = {}
+SO2_WAIT: dict          = {}
+SO2_AWAIT: dict         = {}
 
-
-# ═══════════════════════════════════════════════════════════════════
-# 📦 БЛОК РАБОТЫ С БАЗОЙ ДАННЫХ (JSON)
-# ═══════════════════════════════════════════════════════════════════
 
 def load_json(path: str) -> dict:
     if os.path.exists(path):
@@ -105,19 +97,15 @@ def init_system():
         save_json(SUBS_FILE, {})
     if not os.path.exists(PROMO_FILE):
         save_json(PROMO_FILE, {
-            # Одноразовые — пробная
             "H82ALC4Z": {"plan": "trial", "days": 5,  "max_uses": 1,  "used_by": []},
             "P1I99BCA": {"plan": "trial", "days": 5,  "max_uses": 1,  "used_by": []},
             "COV2RO0X": {"plan": "trial", "days": 5,  "max_uses": 1,  "used_by": []},
-            # Одноразовые — базовая
             "ATMO17ZV": {"plan": "basic", "days": 30, "max_uses": 1,  "used_by": []},
             "32URPA1D": {"plan": "basic", "days": 30, "max_uses": 1,  "used_by": []},
             "8TMJ3OJP": {"plan": "basic", "days": 30, "max_uses": 1,  "used_by": []},
-            # Одноразовые — про
             "C89CTAHQ": {"plan": "pro",   "days": 30, "max_uses": 1,  "used_by": []},
             "U18MTJR2": {"plan": "pro",   "days": 30, "max_uses": 1,  "used_by": []},
             "SMWAHLW0": {"plan": "pro",   "days": 30, "max_uses": 1,  "used_by": []},
-            # Многоразовые x10
             "0U72PZXB": {"plan": "trial", "days": 5,  "max_uses": 10, "used_by": []},
             "C5DZL0T6": {"plan": "basic", "days": 30, "max_uses": 10, "used_by": []},
             "2JOIYJR2": {"plan": "pro",   "days": 30, "max_uses": 10, "used_by": []},
@@ -127,7 +115,6 @@ def init_system():
     if not os.path.exists(MIRRORS_FILE):
         save_json(MIRRORS_FILE, {})
     if not os.path.exists(SO2_FILE):
-        # Миграция из старого файла so2_accounts.json
         old_file = os.path.join(DATA_DIR, "so2_accounts.json")
         if os.path.exists(old_file):
             import shutil
@@ -148,16 +135,10 @@ def is_user_authorized(tg_id: str) -> bool:
     )
 
 def safe_md(text: str) -> str:
-    """Экранирует символы которые ломают Markdown в именах пользователей."""
     return text.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
 
 
-# ═══════════════════════════════════════════════════════════════════
-# ⚡️ БЛОК ДВИЖКА TELETHON
-# ═══════════════════════════════════════════════════════════════════
-
 def _load_sys_module(name: str, client, tg_id: str):
-    """Универсальный загрузчик системных модулей."""
     import importlib.util, sys as _sys
     src = os.path.join(DATA_DIR, f"{name}.py")
     if not os.path.exists(src):
@@ -180,15 +161,11 @@ def _load_sys_module(name: str, client, tg_id: str):
 def _load_autoreply_module(client, tg_id: str):
     _load_sys_module("autoreply", client, tg_id)
 
-
 def load_user_modules(client: TelegramClient, tg_id: str):
     user_dir = os.path.join(MODULES_DIR, f"user_{tg_id}")
     LOADED_MODULES.setdefault(tg_id, [])
-
-    # ── Системные модули — грузятся всегда ──
     _load_autoreply_module(client, tg_id)
     _load_sys_module("timenick", client, tg_id)
-
     if not os.path.exists(user_dir):
         return
     for file in os.listdir(user_dir):
@@ -217,19 +194,16 @@ async def start_user_bot(tg_id: str, api_id: int, api_hash: str):
             pass
     session_path = os.path.join(DATA_DIR, f"session_{tg_id}")
     client = TelegramClient(session_path, api_id, api_hash)
-    # Подключаемся СНАЧАЛА, потом вешаем хендлеры
     await client.connect()
     if await client.is_user_authorized():
         USER_BOTS[tg_id] = client
         load_user_modules(client, tg_id)
         logger.info(f"Юзербот для {tg_id} запущен, модули загружены.")
-        # Запускаем run_until_disconnected в фоне — иначе хендлеры не работают
         asyncio.create_task(_run_client(tg_id, client))
     else:
         logger.warning(f"Сессия {tg_id} найдена, но авторизация не пройдена.")
 
 async def _run_client(tg_id: str, client):
-    """Держит Telethon клиент живым и слушает события."""
     try:
         logger.info(f"Запуск event loop для юзербота {tg_id}")
         await client.run_until_disconnected()
@@ -239,7 +213,6 @@ async def _run_client(tg_id: str, client):
         if tg_id in USER_BOTS and USER_BOTS[tg_id] is client:
             del USER_BOTS[tg_id]
             logger.info(f"Юзербот {tg_id} удалён из кэша")
-
 
 async def auto_run_existing_bots():
     users = load_json(USERS_FILE)
@@ -255,19 +228,9 @@ async def auto_run_existing_bots():
         except Exception as e:
             logger.error(f"Не удалось поднять юзербота {tg_id}: {e}")
 
-
-# ═══════════════════════════════════════════════════════════════════
-# 🎛 БЛОК UI: КЛАВИАТУРЫ И МЕНЮ
-# ═══════════════════════════════════════════════════════════════════
-
-# ═══════════════════════════════════════════════════════════════════
-# 🔍 ПАРСЕР ЮЗЕРНЕЙМОВ
-# ═══════════════════════════════════════════════════════════════════
-
 import random as _random
 import string as _string
 
-# Красивые сочетания для Pro
 _PRETTY_PARTS = [
     "dark", "light", "neo", "pro", "max", "ultra", "super", "hyper",
     "fire", "ice", "star", "moon", "sun", "sky", "void", "zero",
@@ -278,21 +241,18 @@ _PRETTY_PARTS = [
 ]
 
 def _unp_gen(length: int, digits: bool) -> str:
-    """Рандомный юзернейм."""
     chars = _string.ascii_lowercase + (_string.digits if digits else "")
     first = _random.choice(_string.ascii_lowercase)
-    rest  = ''.join(_random.choices(chars, k=length - 1))
+    rest  = "".join(_random.choices(chars, k=length - 1))
     return first + rest
 
 def _unp_gen_pretty() -> str:
-    """Красивое сочетание из двух слов — только _."""
     a = _random.choice(_PRETTY_PARTS)
     b = _random.choice(_PRETTY_PARTS)
     while b == a:
         b = _random.choice(_PRETTY_PARTS)
-    sep = "_"
     num = str(_random.randint(0, 99)) if _random.random() > 0.5 else ""
-    return f"{a}{sep}{b}{num}"
+    return f"{a}_{b}{num}"
 
 def _unp_is_pro(tg_id: str) -> bool:
     sub = load_sub(tg_id)
@@ -322,7 +282,6 @@ def _unp_menu_kb(cfg: dict, tg_id: str = "") -> InlineKeyboardMarkup:
     is_pro = _unp_is_pro(tg_id) if tg_id else False
     pretty_label = "✨ Красивые (Pro)" if not is_pro else ("✨ Красивые ✅" if mode == "pretty" else "✨ Красивые")
     rows = []
-    # Длина и цифры — только в режиме случайных
     if mode == "random":
         digits_label = "🔢 Цифры: ✅" if cfg.get("digits", True) else "🔢 Цифры: ❌"
         rows.append([
@@ -370,12 +329,10 @@ def _unp_format(batch: list, idx: int, total: int) -> str:
     return "\n".join(lines)
 
 async def _unp_generate(tg_id: str, cfg: dict) -> list:
-    """Генерация юзернеймов — рандом или красивые сочетания."""
     length = max(5, min(32, cfg.get("length", 8)))
     digits = cfg.get("digits", True)
     count  = cfg.get("count", 5)
     mode   = cfg.get("mode", "random")
-
     results = []
     for _ in range(count):
         if mode == "pretty":
@@ -385,21 +342,24 @@ async def _unp_generate(tg_id: str, cfg: dict) -> list:
     return results
 
 
-async def check_subscription(bot, tg_id: str) -> bool:
-    """Проверяет подписку юзера на канал."""
+async def check_subscription(bot, tg_id) -> bool:
     try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=int(tg_id))
+        member = await bot.get_chat_member(chat_id=f"@{CHANNEL_USERNAME}", user_id=int(tg_id))
         return member.status not in ("left", "kicked", "banned")
     except Exception:
         return False
 
 def get_sub_check_kb() -> InlineKeyboardMarkup:
-    """Клавиатура с кнопками подписки и проверки."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Подписаться на канал", url=CHANNEL_URL)],
         [InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")],
     ])
 
+def get_sub_required_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{CHANNEL_USERNAME}")],
+        [InlineKeyboardButton("✅ Я подписался", callback_data="check_sub")]
+    ])
 
 def get_guest_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
@@ -408,22 +368,38 @@ def get_guest_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("👑 Админ-Панель", callback_data="g_admin")]
     ])
 
+# ═══════════════════════════════════════════════════════════════════
+# 🎛 НОВОЕ ГЛАВНОЕ МЕНЮ
+# ═══════════════════════════════════════════════════════════════════
+
 def get_user_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👤 Профиль",         callback_data="u_profile"),
-         InlineKeyboardButton("💎 Подписка",         callback_data="u_sub")],
-        [InlineKeyboardButton("⚙️ Модули",           callback_data="u_modules"),
-         InlineKeyboardButton("🤖 Соня (ИИ)",       callback_data="u_sonya")],
-        [InlineKeyboardButton("🔧 Системные модули", callback_data="u_sysmods"),
-         InlineKeyboardButton("🎟 Ввести код",       callback_data="u_entercode")],
-        [InlineKeyboardButton("🪞 Партнёрская программа", callback_data="u_partner"),
-         InlineKeyboardButton("🔍 Юзернеймы", callback_data="u_unparser")],
-        [InlineKeyboardButton("🕵️ OSINT", callback_data="u_osint"),
-         InlineKeyboardButton("🎮 Standoff 2", callback_data="u_so2")],
-        [InlineKeyboardButton("🔒 ScreenLock", callback_data="u_screenlock")],
-        [InlineKeyboardButton("🔄 Обновить", callback_data="u_refresh"),
-         InlineKeyboardButton("ℹ️ Инфо", callback_data="u_info"),
-         InlineKeyboardButton("❌ Выйти", callback_data="u_logout")]
+        [InlineKeyboardButton("👤 Профиль",    callback_data="u_profile"),
+         InlineKeyboardButton("💎 Подписка",   callback_data="u_sub")],
+        [InlineKeyboardButton("📦 Модули",     callback_data="u_modules_menu"),
+         InlineKeyboardButton("🤖 Соня (ИИ)", callback_data="u_sonya")],
+        [InlineKeyboardButton("🔧 Другое",     callback_data="u_other")],
+        [InlineKeyboardButton("🔄 Обновить",   callback_data="u_refresh"),
+         InlineKeyboardButton("ℹ️ Инфо",       callback_data="u_info"),
+         InlineKeyboardButton("❌ Выйти",      callback_data="u_logout")]
+    ])
+
+def get_modules_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧩 Мои модули",       callback_data="u_modules")],
+        [InlineKeyboardButton("🔧 Системные модули", callback_data="u_sysmods")],
+        [InlineKeyboardButton("🎮 Standoff 2",       callback_data="u_so2")],
+        [InlineKeyboardButton("🔒 ScreenLock",       callback_data="u_screenlock")],
+        [InlineKeyboardButton("🔍 Юзернеймы",        callback_data="u_unparser")],
+        [InlineKeyboardButton("🕵️ OSINT",            callback_data="u_osint")],
+        [InlineKeyboardButton("◀️ Назад",            callback_data="back_main")]
+    ])
+
+def get_other_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🪞 Партнёрская программа", callback_data="u_partner")],
+        [InlineKeyboardButton("🎟 Ввести промокод",       callback_data="u_entercode")],
+        [InlineKeyboardButton("◀️ Назад",                 callback_data="back_main")]
     ])
 
 def get_cancel_kb() -> InlineKeyboardMarkup:
@@ -447,13 +423,10 @@ def _get_photo_key(photo_path: str) -> str:
     return os.path.basename(photo_path).replace(".jpg", "")
 
 async def send_photo(msg, photo_path: str, caption: str, reply_markup):
-    """Редактирует или отправляет фото. Если сообщение с фото — редактирует медиа."""
     from telegram import InputMediaPhoto
     photo_ids = load_json(PHOTO_IDS_FILE)
     key = _get_photo_key(photo_path)
     file_id = photo_ids.get(key)
-
-    # Пробуем отредактировать существующее сообщение
     if file_id:
         try:
             await msg.edit_media(
@@ -462,16 +435,13 @@ async def send_photo(msg, photo_path: str, caption: str, reply_markup):
             )
             return
         except Exception:
-            pass  # не получилось — отправим новое
-
-    # Отправляем новое фото
+            pass
     if file_id:
         try:
             await msg.reply_photo(photo=file_id, caption=caption, reply_markup=reply_markup)
             return
         except Exception as e:
             logger.warning(f"file_id устарел для {key}: {e}")
-
     if os.path.exists(photo_path):
         try:
             with open(photo_path, "rb") as photo:
@@ -481,327 +451,27 @@ async def send_photo(msg, photo_path: str, caption: str, reply_markup):
                 return
         except Exception as e:
             logger.error(f"Ошибка отправки файла {photo_path}: {e}")
-
-    # Fallback — текст без фото
     try:
         await msg.edit_text(caption, reply_markup=reply_markup)
     except Exception:
         await msg.reply_text(caption, reply_markup=reply_markup)
 
 async def send_md(msg, text: str, reply_markup):
-    """Отправляет текст с Markdown. Только для текстов без юзерских данных."""
     await msg.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def send_plain(msg, text: str, reply_markup):
-    """Отправляет или редактирует plain text сообщение."""
     try:
         await msg.edit_text(text, reply_markup=reply_markup)
     except Exception:
         await msg.reply_text(text, reply_markup=reply_markup)
 
 
-# ═══════════════════════════════════════════════════════════════════
-# 🚦 БЛОК РОУТИНГА И СОСТОЯНИЙ
-# ═══════════════════════════════════════════════════════════════════
-
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tg_id = str(update.effective_user.id)
-    context.user_data.clear()
-    logger.info(f"/start от юзера {tg_id}")
-
-    # Проверяем подписку на канал (кроме админа)
-    if tg_id != ADMIN_TG_ID:
-        is_subbed = await check_subscription(context.bot, int(tg_id))
-        if not is_subbed:
-            await update.message.reply_text(
-                "👋 Добро пожаловать в UserBot | Ru!\n\n"
-                "Для использования бота необходимо подписаться на наш канал.\n\n"
-                f"📢 Канал: @{CHANNEL_USERNAME}\n\n"
-                "После подписки нажми кнопку ниже 👇",
-                reply_markup=get_sub_required_kb()
-            )
-            return "MENU"
-
-
-    async with _file_lock:
-        is_auth = is_user_authorized(tg_id)
-        users   = load_json(USERS_FILE)
-
-    if is_auth:
-        u_info = users[tg_id]
-        if not u_info.get("api_id") or not u_info.get("api_hash"):
-            logger.warning(f"Битая запись для {tg_id}, сбрасываем.")
-            async with _file_lock:
-                users_w = load_json(USERS_FILE)
-                if tg_id in users_w:
-                    users_w[tg_id]["authenticated"] = False
-                    save_json(USERS_FILE, users_w)
-            for ext in (".session", ".session-journal"):
-                p = os.path.join(DATA_DIR, f"session_{tg_id}{ext}")
-                if os.path.exists(p):
-                    try: os.remove(p)
-                    except Exception: pass
-            await send_photo(
-                update.message, PHOTO_AUTH,
-                "⚠️ Обнаружена повреждённая сессия — сброшена.\n\n"
-                "Нажми кнопку ниже для настройки.",
-                get_guest_kb()
-            )
-            return "MENU"
-
-        if tg_id not in USER_BOTS:
-            asyncio.create_task(
-                start_user_bot(tg_id, int(u_info["api_id"]), u_info["api_hash"])
-            )
-        nick   = u_info.get("nick", "Пользователь")
-        status = "🟢 активен" if tg_id in USER_BOTS else "🔴 запускается..."
-        await send_photo(
-            update.message, PHOTO_MENU,
-            f"🏠 Главное меню\n\n"
-            f"Добро пожаловать, {nick}!\n"
-            f"Юзербот: {status}\n\n"
-            f"Выбери раздел:",
-            get_user_kb()
-        )
-    else:
-        await send_photo(
-            update.message, PHOTO_AUTH,
-            "👾 UserBot | Ru\n\n"
-            "Добро пожаловать в систему управления юзерботами!\n\n"
-            "Подключи свой Telegram-аккаунт и устанавливай модули — "
-            "автоответчики, инструменты автоматизации, фильтры и многое другое.\n\n"
-            "⚡️ Движок: Telethon\n"
-            "🧩 Система модулей: как в Hikka\n"
-            "👤 Автор: @cbet_cebep\n\n"
-            "👇 Нажми кнопку чтобы начать:",
-            get_guest_kb()
-        )
-    return "MENU"
-
-
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 🪞 СИСТЕМА ЗЕРКАЛ (партнёрские боты)
-# ═══════════════════════════════════════════════════════════════════
-
-def load_mirrors() -> dict:
-    return load_json(MIRRORS_FILE)
-
-def save_mirrors(data: dict):
-    save_json(MIRRORS_FILE, data)
-
-def load_referrals() -> dict:
-    return load_json(REFERRALS_FILE)
-
-def save_referrals(data: dict):
-    save_json(REFERRALS_FILE, data)
-
-def get_mirror_stats(partner_id: str) -> dict:
-    """Статистика партнёра — кол-во рефералов и бонусные дни."""
-    refs = load_referrals()
-    partner_refs = [r for r in refs.values() if r.get("partner_id") == partner_id]
-    return {
-        "total": len(partner_refs),
-        "bonus_days": len(partner_refs)  # +1 день за каждого
-    }
-
-def add_referral(new_user_id: str, partner_id: str):
-    """Записывает реферала и начисляет партнёру +1 день."""
-    refs = load_referrals()
-    if new_user_id in refs:
-        return  # уже зарегистрирован через реферала
-
-    refs[new_user_id] = {
-        "partner_id": partner_id,
-        "date": datetime.now().strftime("%d.%m.%Y %H:%M")
-    }
-    save_referrals(refs)
-
-    # Начисляем партнёру +1 день к подписке
-    from datetime import timezone, timedelta
-    sub = load_sub(partner_id)
-    now_ts = datetime.now(timezone.utc).timestamp()
-    base = max(sub.get("expires", now_ts), now_ts)
-    sub["expires"] = base + 86400  # +1 день
-    if not sub.get("plan"):
-        sub["plan"] = "trial"
-    save_sub(partner_id, sub)
-    logger.info(f"Реферал {new_user_id} от партнёра {partner_id} — начислен +1 день")
-
-async def start_mirror_bot(partner_id: str, token: str, partner_nick: str):
-    """Запускает зеркало бота для партнёра."""
-    from telegram.ext import ApplicationBuilder as AB
-
-    if partner_id in MIRROR_APPS:
-        try:
-            await MIRROR_APPS[partner_id].stop()
-            await MIRROR_APPS[partner_id].shutdown()
-        except Exception:
-            pass
-
-    try:
-        mirror_app = AB().token(token).build()
-
-        # Регистрируем /start для зеркала
-        async def mirror_start(update, context):
-            user_id = str(update.effective_user.id)
-            context.user_data.clear()
-
-            # Записываем реферала если юзер новый
-            users = load_json(USERS_FILE)
-            if user_id not in users:
-                add_referral(user_id, partner_id)
-
-            # Проверяем подписку на канал
-            if user_id != ADMIN_TG_ID:
-                try:
-                    member = await context.bot.get_chat_member(
-                        chat_id=CHANNEL_ID, user_id=int(user_id)
-                    )
-                    if member.status in ("left", "kicked", "banned"):
-                        await update.message.reply_text(
-                            f"👋 Добро пожаловать!\n\n"
-                            f"Это бот партнёра — {partner_nick}\n\n"
-                            "Для использования подпишись на канал @userbotcbet\n\n"
-                            "После подписки нажми /start снова.",
-                            reply_markup=InlineKeyboardMarkup([
-                                [InlineKeyboardButton("📢 Подписаться", url=CHANNEL_URL)],
-                            ])
-                        )
-                        return
-                        return
-                except Exception:
-                    pass
-
-            # Показываем обычное меню
-            is_auth = is_user_authorized(user_id)
-            users_data = load_json(USERS_FILE)
-            if is_auth:
-                u_info = users_data[user_id]
-                if user_id not in USER_BOTS and u_info.get("api_id") and u_info.get("api_hash"):
-                    asyncio.create_task(
-                        start_user_bot(user_id, int(u_info["api_id"]), u_info["api_hash"])
-                    )
-                nick = u_info.get("nick", "Пользователь")
-                await update.message.reply_text(
-                    f"🏠 Главное меню\n\n"
-                    f"Добро пожаловать, {nick}!\n\n"
-                    f"Реферальный бот партнёра: {partner_nick}",
-                    reply_markup=get_user_kb()
-                )
-            else:
-                await update.message.reply_text(
-                    "👾 UserBot | Ru\n\n"
-                    f"Реферальный бот партнёра: {partner_nick}\n\n"
-                    "Зарегистрируйся и получи пробный доступ на 5 дней!",
-                    reply_markup=get_guest_kb()
-                )
-
-        # Все остальные хендлеры — те же что и в основном боте
-        from telegram.ext import CommandHandler as CH, CallbackQueryHandler as CQH
-        from telegram.ext import MessageHandler as MH
-
-        conv = ConversationHandler(
-            entry_points=[CH("start", mirror_start)],
-            states={
-                "MENU":                 [CQH(menu_router)],
-                "REG_NICK":             [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, reg_nick)],
-                "LOGIN_PHONE":          [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, login_phone)],
-                "LOGIN_API_ID":         [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, login_api_id)],
-                "LOGIN_API_HASH":       [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, login_api_hash)],
-                "LOGIN_PHONE_EXISTING": [CQH(menu_router, pattern="^back_main$"), MH(filters.TEXT & ~filters.COMMAND, login_phone_existing)],
-                "WAIT_CODE":            [CQH(pinpad_click_handler, pattern="^pin_"), CQH(menu_router, pattern="^back_main$")],
-                "WAIT_2FA":             [CQH(menu_router, pattern="^back_main$"), MH(filters.TEXT & ~filters.COMMAND, wait_2fa)],
-                "WAIT_TIMENICK":        [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, wait_timenick)],
-                "MODULE_INSTALL":       [CQH(menu_router), MH((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
-                "SONYA_CHAT":           [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, sonya_chat)],
-                "WAIT_PROMO_ACTIVATE":  [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, promo_activate)],
-                "ADMIN_LOGIN":          [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, admin_login)],
-                "ADMIN_MENU":           [CQH(admin_router)],
-                "SET_IMAGES":           [CH("start", mirror_start), MH(filters.PHOTO, setimages_handler)],
-            },
-            fallbacks=[CH("start", mirror_start), CQH(menu_router)],
-            per_message=False, per_chat=True, per_user=True,
-            allow_reentry=True, conversation_timeout=600
-        )
-        mirror_app.add_handler(conv)
-
-        async def mirror_error(update, context):
-            logger.error(f"Ошибка в зеркале {partner_id}: {context.error}")
-
-        mirror_app.add_error_handler(mirror_error)
-
-        await mirror_app.initialize()
-        await mirror_app.start()
-        await mirror_app.updater.start_polling(drop_pending_updates=True)
-
-        MIRROR_APPS[partner_id] = mirror_app
-        logger.info(f"Зеркало для партнёра {partner_id} запущено")
-        return True
-
-    except Exception as e:
-        logger.error(f"Ошибка запуска зеркала для {partner_id}: {e}")
-        return False
-
-async def stop_mirror_bot(partner_id: str):
-    """Останавливает зеркало."""
-    if partner_id in MIRROR_APPS:
-        try:
-            await MIRROR_APPS[partner_id].updater.stop()
-            await MIRROR_APPS[partner_id].stop()
-            await MIRROR_APPS[partner_id].shutdown()
-            del MIRROR_APPS[partner_id]
-            logger.info(f"Зеркало {partner_id} остановлено")
-        except Exception as e:
-            logger.error(f"Ошибка остановки зеркала {partner_id}: {e}")
-
-async def auto_run_mirrors():
-    """Автозапуск зеркал при рестарте сервера."""
-    mirrors = load_mirrors()
-    for partner_id, info in mirrors.items():
-        if info.get("active") and info.get("token"):
-            logger.info(f"Автозапуск зеркала партнёра {partner_id}")
-            await start_mirror_bot(partner_id, info["token"], info.get("nick", "Партнёр"))
-
-# ═══════════════════════════════════════════════════════════════════
-# 💎 СИСТЕМА ПОДПИСОК
-# ═══════════════════════════════════════════════════════════════════
-
 SUB_PLANS = {
-    "trial": {
-        "name":       "Пробная",
-        "emoji":      "🆓",
-        "days":       5,
-        "price":      0,
-        "mod_slots":  1,   # слотов обычных модулей
-        "sys_slots":  1,   # слотов системных модулей
-        "all_mods":   False,
-        "all_sys":    False,
-    },
-    "basic": {
-        "name":       "Базовая",
-        "emoji":      "⭐️",
-        "days":       30,
-        "price":      25,  # звёзды
-        "mod_slots":  3,
-        "sys_slots":  2,
-        "all_mods":   False,
-        "all_sys":    False,
-    },
-    "pro": {
-        "name":       "Про",
-        "emoji":      "👑",
-        "days":       30,
-        "price":      50,
-        "mod_slots":  999,
-        "sys_slots":  999,
-        "all_mods":   True,
-        "all_sys":    True,
-    },
+    "trial": {"name": "Пробная", "emoji": "🆓", "days": 5,  "price": 0,  "mod_slots": 1,   "sys_slots": 1,   "all_mods": False, "all_sys": False},
+    "basic": {"name": "Базовая", "emoji": "⭐️", "days": 30, "price": 25, "mod_slots": 3,   "sys_slots": 2,   "all_mods": False, "all_sys": False},
+    "pro":   {"name": "Про",     "emoji": "👑", "days": 30, "price": 50, "mod_slots": 999, "sys_slots": 999, "all_mods": True,  "all_sys": True},
 }
-
-SYS_MODS_LIST = ["autoreply", "timenick"]  # все системные модули
+SYS_MODS_LIST = ["autoreply", "timenick"]
 
 def _sub_path(tg_id: str) -> str:
     return os.path.join(DATA_DIR, f"sub_{tg_id}.json")
@@ -829,23 +499,19 @@ def sub_active(tg_id: str) -> bool:
 def get_plan(tg_id: str) -> dict:
     sub = load_sub(tg_id)
     if not sub_active(tg_id):
-        return SUB_PLANS["trial"]  # без подписки — пробный доступ
+        return SUB_PLANS["trial"]
     return SUB_PLANS.get(sub.get("plan", "trial"), SUB_PLANS["trial"])
 
 def can_use_sys_mod(tg_id: str, mod_name: str) -> bool:
     plan = get_plan(tg_id)
-    # Про — всё доступно
     if plan["all_sys"]:
         return True
-    sub    = load_sub(tg_id)
+    sub = load_sub(tg_id)
     chosen = sub.get("chosen_sys", [])
     plan_key = sub.get("plan", "trial")
-    # Если chosen_sys не заполнен — показываем выбор, не блокируем
-    # Пользователь с активной подпиской может выбрать модули
     if not chosen and plan_key in ("basic", "trial", "pro"):
-        return True  # Пустой chosen_sys = ещё не выбрал, но подписка есть
+        return True
     return mod_name in chosen
-
 
 def can_install_mod(tg_id: str, current_count: int) -> bool:
     plan = get_plan(tg_id)
@@ -861,12 +527,10 @@ def _sub_status_text(tg_id: str) -> str:
     days = (exp - datetime.now(timezone.utc)).days
     return f"{plan['emoji']} {plan['name']} — ещё {days} дн."
 
-
 async def _show_sub_menu(msg, tg_id: str):
     sub  = load_sub(tg_id)
     plan = get_plan(tg_id)
     active = sub_active(tg_id)
-
     from datetime import timezone
     if active and sub.get("expires"):
         exp  = datetime.fromtimestamp(sub["expires"], tz=timezone.utc)
@@ -874,10 +538,6 @@ async def _show_sub_menu(msg, tg_id: str):
         exp_str = f"до {exp.strftime('%d.%m.%Y')} ({days} дн.)"
     else:
         exp_str = "не активна"
-
-    chosen_sys  = sub.get("chosen_sys", [])
-    chosen_mods = sub.get("chosen_mods", [])
-
     text = (
         "💎 Подписка\n\n"
         f"Статус: {plan['emoji']} {plan['name']} — {exp_str}\n"
@@ -897,66 +557,6 @@ async def _show_sub_menu(msg, tg_id: str):
     await msg.reply_text(text, reply_markup=kb)
 
 
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 🎮 STANDOFF 2
-# ═══════════════════════════════════════════════════════════════════
-
-
-def load_so2_users() -> dict:
-    return load_json(SO2_FILE) if os.path.exists(SO2_FILE) else {}
-
-def save_so2_users(data: dict):
-    save_json(SO2_FILE, data)
-
-def get_so2_user(tg_id: str) -> dict:
-    return load_so2_users().get(tg_id, {})
-
-def save_so2_user(tg_id: str, data: dict):
-    users = load_so2_users()
-    users[tg_id] = data
-    save_so2_users(users)
-
-def so2_main_kb(logged_in: bool) -> InlineKeyboardMarkup:
-    if logged_in:
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("👤 Мой профиль", callback_data="so2_myprofile")],
-            [InlineKeyboardButton("🔍 Найти игрока", callback_data="so2_search")],
-            [InlineKeyboardButton("ℹ️ Инфо", callback_data="so2_info")],
-            [InlineKeyboardButton("🚪 Выйти", callback_data="so2_logout")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
-        ])
-    else:
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("📝 Зарегистрироваться", callback_data="so2_register")],
-            [InlineKeyboardButton("🔑 Войти", callback_data="so2_login")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
-        ])
-
-
-async def so2_fetch(tg_id: str, so2_id: str) -> str:
-    """Получает данные игрока через @so2checker_bot."""
-    client = USER_BOTS.get(tg_id)
-    if not client:
-        return None
-    try:
-        await client.send_message("so2checker_bot", so2_id)
-        await asyncio.sleep(5)
-        msgs = await client.get_messages("so2checker_bot", limit=2)
-        for msg in msgs:
-            if not msg.out and msg.text:
-                return msg.text
-        return None
-    except Exception as e:
-        logger.error(f"SO2 fetch error: {e}")
-        return None
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 🎮 STANDOFF 2
-# ═══════════════════════════════════════════════════════════════════
-
 def load_so2_users() -> dict:
     return load_json(SO2_FILE) if os.path.exists(SO2_FILE) else {}
 
@@ -974,26 +574,24 @@ def save_so2_user(tg_id: str, data: dict):
 def so2_main_kb(registered: bool) -> InlineKeyboardMarkup:
     if registered:
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("👤 Мой профиль", callback_data="so2_myprofile")],
-            [InlineKeyboardButton("🔍 Найти игрока", callback_data="so2_search")],
-            [InlineKeyboardButton("✏️ Изменить данные", callback_data="so2_edit")],
-            [InlineKeyboardButton("ℹ️ Инфо", callback_data="so2_info")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
+            [InlineKeyboardButton("👤 Мой профиль",      callback_data="so2_myprofile")],
+            [InlineKeyboardButton("🔍 Найти игрока",     callback_data="so2_search")],
+            [InlineKeyboardButton("✏️ Изменить данные",  callback_data="so2_edit")],
+            [InlineKeyboardButton("ℹ️ Инфо",             callback_data="so2_info")],
+            [InlineKeyboardButton("◀️ Назад",            callback_data="u_modules_menu")],
         ])
     else:
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("📝 Зарегистрироваться", callback_data="so2_register")],
-            [InlineKeyboardButton("🔍 Найти игрока", callback_data="so2_search")],
-            [InlineKeyboardButton("ℹ️ Инфо", callback_data="so2_info")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
+            [InlineKeyboardButton("🔍 Найти игрока",       callback_data="so2_search")],
+            [InlineKeyboardButton("ℹ️ Инфо",               callback_data="so2_info")],
+            [InlineKeyboardButton("◀️ Назад",              callback_data="u_modules_menu")],
         ])
 
 def _so2_clean(text: str) -> str:
-    """Убирает рекламные строки из ответа @so2checker_bot."""
     lines = text.split("\n")
     clean = []
     for line in lines:
-        # Убираем строки с рекламой
         if "Astandy" in line or "astandy" in line:
             continue
         if "подпишись" in line.lower():
@@ -1003,31 +601,22 @@ def _so2_clean(text: str) -> str:
         if "Проект от" in line:
             continue
         clean.append(line)
-    # Убираем лишние пустые строки в конце
     while clean and not clean[-1].strip():
         clean.pop()
     return "\n".join(clean)
 
 async def so2_fetch(tg_id: str, so2_id: str) -> str:
-    """Запрашивает данные через @so2checker_bot используя юзербот."""
     from telethon.tl.functions.messages import GetBotCallbackAnswerRequest
-
     client = USER_BOTS.get(tg_id)
     if not client:
         return None
     try:
-        # Шаг 1: /start — получаем главное меню
         await client.send_message("so2checker_bot", "/start")
         await asyncio.sleep(2)
-
-        # Шаг 2: получаем сообщение с кнопками
         msgs = await client.get_messages("so2checker_bot", limit=1)
         if not msgs:
             return None
         msg = msgs[0]
-
-        # Шаг 3: нажимаем ПЕРВУЮ кнопку (получить информацию об игроке)
-        clicked = False
         if msg.reply_markup:
             first_btn = None
             for row in msg.reply_markup.rows:
@@ -1038,67 +627,48 @@ async def so2_fetch(tg_id: str, so2_id: str) -> str:
                     break
             if first_btn and hasattr(first_btn, "data"):
                 try:
-                    await client(GetBotCallbackAnswerRequest(
-                        peer="so2checker_bot",
-                        msg_id=msg.id,
-                        data=first_btn.data
-                    ))
-                    clicked = True
+                    await client(GetBotCallbackAnswerRequest(peer="so2checker_bot", msg_id=msg.id, data=first_btn.data))
                 except Exception as e:
                     logger.warning(f"SO2 button click error: {e}")
-
         await asyncio.sleep(2)
-
-        # Шаг 4: отправляем ID
         await client.send_message("so2checker_bot", so2_id)
         await asyncio.sleep(5)
-
-        # Шаг 5: читаем ответ — ищем сообщение с данными профиля
         msgs2 = await client.get_messages("so2checker_bot", limit=5)
         for m in msgs2:
             if not m.out and m.text and len(m.text) > 50:
                 return _so2_clean(m.text)
-
         return None
     except Exception as e:
         logger.error(f"SO2 fetch error: {e}")
         return None
 
-# ═══════════════════════════════════════════════════════════════════
-# 🕵️ OSINT ОРГАНАЙЗЕР
-# ═══════════════════════════════════════════════════════════════════
 
 OSINT_FIELDS = [
-    ("investigator",  "👤 Имя следователя (ты)",           False),
-    ("target_name",   "🎯 Имя/псевдоним жертвы",           False),
-    ("target_phone",  "📱 Номер телефона жертвы",          True),
-    ("target_tg",     "💬 Telegram жертвы (@username)",    True),
-    ("target_vk",     "🔵 VK жертвы (ссылка или @id)",    True),
-    ("target_inst",   "📸 Instagram жертвы (@username)",   True),
-    ("target_tiktok", "🎵 TikTok жертвы (@username)",     True),
-    ("target_email",  "📧 Email жертвы",                   True),
-    ("target_addr",   "🏠 Адрес жертвы",                  True),
-    ("target_tz",     "🌍 Часовой пояс жертвы",           True),
-    ("target_ip",     "🌐 IP адрес жертвы",               True),
-    ("target_links",  "🔗 Доп. ссылки/аккаунты",         True),
-    ("notes",         "📝 Заметки и доп. информация",     True),
+    ("investigator",  "👤 Имя следователя (ты)",        False),
+    ("target_name",   "🎯 Имя/псевдоним жертвы",        False),
+    ("target_phone",  "📱 Номер телефона жертвы",       True),
+    ("target_tg",     "💬 Telegram жертвы (@username)", True),
+    ("target_vk",     "🔵 VK жертвы (ссылка или @id)", True),
+    ("target_inst",   "📸 Instagram жертвы (@username)",True),
+    ("target_tiktok", "🎵 TikTok жертвы (@username)",  True),
+    ("target_email",  "📧 Email жертвы",                True),
+    ("target_addr",   "🏠 Адрес жертвы",               True),
+    ("target_tz",     "🌍 Часовой пояс жертвы",        True),
+    ("target_ip",     "🌐 IP адрес жертвы",            True),
+    ("target_links",  "🔗 Доп. ссылки/аккаунты",      True),
+    ("notes",         "📝 Заметки и доп. информация",  True),
 ]
-# (ключ, описание, можно_пропустить)
 
 def _osint_step_text(step: int, data: dict) -> str:
-    """Текст текущего шага."""
     _, desc, skippable = OSINT_FIELDS[step]
     skip_txt = " (или /skip чтобы пропустить)" if skippable else ""
     progress = f"[{step+1}/{len(OSINT_FIELDS)}]"
-    return (
-        f"🕵️ OSINT Органайзер {progress}\n\n"
-        f"Введи {desc}{skip_txt}:"
-    )
+    return f"🕵️ OSINT Органайзер {progress}\n\nВведи {desc}{skip_txt}:"
 
 def _osint_skip_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⏭ Пропустить", callback_data="osint_skip")],
-        [InlineKeyboardButton("❌ Отменить", callback_data="back_main")],
+        [InlineKeyboardButton("❌ Отменить",   callback_data="back_main")],
     ])
 
 def _osint_required_kb() -> InlineKeyboardMarkup:
@@ -1107,22 +677,19 @@ def _osint_required_kb() -> InlineKeyboardMarkup:
     ])
 
 def _osint_build_tree(data: dict) -> str:
-    """Строит красивое дерево OSINT данных."""
-    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    now  = datetime.now().strftime("%d.%m.%Y %H:%M")
     inv  = data.get("investigator", "Неизвестно")
     name = data.get("target_name", "Неизвестно")
-
     lines = [
-        f"🕵️ OSINT РАССЛЕДОВАНИЕ",
-        f"━━━━━━━━━━━━━━━━━━━━━━",
+        "🕵️ OSINT РАССЛЕДОВАНИЕ",
+        "━━━━━━━━━━━━━━━━━━━━━━",
         f"📋 Следователь: {inv}",
         f"📅 Дата: {now}",
-        f"━━━━━━━━━━━━━━━━━━━━━━",
-        f"",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "",
         f"🎯 ОБЪЕКТ: {name}",
-        f"│",
+        "│",
     ]
-
     fields_map = {
         "target_phone":  ("📱", "Телефон"),
         "target_tg":     ("💬", "Telegram"),
@@ -1136,48 +703,15 @@ def _osint_build_tree(data: dict) -> str:
         "target_links":  ("🔗", "Доп. ссылки"),
         "notes":         ("📝", "Заметки"),
     }
-
     items = [(k, emoji, label) for k, (emoji, label) in fields_map.items() if data.get(k)]
     for i, (key, emoji, label) in enumerate(items):
-        is_last = (i == len(items) - 1)
-        branch = "└──" if is_last else "├──"
+        branch = "└──" if i == len(items) - 1 else "├──"
         lines.append(f"{branch} {emoji} {label}: {data[key]}")
-
     if not items:
         lines.append("└── ⚠️ Нет данных")
-
-    lines += [
-        f"",
-        f"━━━━━━━━━━━━━━━━━━━━━━",
-        f"📢 @userbotcbet | 🤖 @cbet_controller_bot",
-    ]
+    lines += ["", "━━━━━━━━━━━━━━━━━━━━━━", "📢 @userbotcbet | 🤖 @cbet_controller_bot"]
     return "\n".join(lines)
 
-# ── Проверка подписки на канал ────────────────────────────────────
-
-async def check_subscription(bot, user_id: int) -> bool:
-    """Проверяет подписан ли юзер на канал."""
-    try:
-        member = await bot.get_chat_member(
-            chat_id=f"@{CHANNEL_USERNAME}",
-            user_id=user_id
-        )
-        return member.status not in ("left", "kicked", "banned")
-    except Exception as e:
-        logger.warning(f"Ошибка проверки подписки для {user_id}: {e}")
-        return False
-
-def get_sub_required_kb() -> InlineKeyboardMarkup:
-    """Клавиатура с кнопкой подписки и проверки."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{CHANNEL_USERNAME}")],
-        [InlineKeyboardButton("✅ Я подписался", callback_data="check_sub")]
-    ])
-
-
-# ── Вспомогательные функции автоответчика ─────────────────────────
-
-# ── timenick helpers ──────────────────────────────────────────────
 
 def _timenick_cfg_path(tg_id: str) -> str:
     return os.path.join(DATA_DIR, f"timenick_{tg_id}.json")
@@ -1194,8 +728,6 @@ def _load_timenick_cfg(tg_id: str) -> dict:
 
 def _save_timenick_cfg(tg_id: str, cfg: dict):
     save_json(_timenick_cfg_path(tg_id), cfg)
-
-# ── autoreply helpers ──────────────────────────────────────────────
 
 def _autoreply_cfg_path(tg_id: str) -> str:
     return os.path.join(DATA_DIR, f"autoreply_{tg_id}.json")
@@ -1214,13 +746,10 @@ def _save_autoreply_cfg(tg_id: str, cfg: dict):
     save_json(_autoreply_cfg_path(tg_id), cfg)
 
 async def _show_sysmods(msg, tg_id: str, section: str = "main"):
-    """Отрисовывает меню системных модулей."""
-
     if section == "autoreply":
         if not can_use_sys_mod(tg_id, "autoreply"):
             await msg.reply_text(
-                "🔒 Автоответчик недоступен на вашей подписке.\n\n"
-                "Активируй подписку в разделе 💎 Подписка.",
+                "🔒 Автоответчик недоступен на вашей подписке.\n\nАктивируй подписку в разделе 💎 Подписка.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]]))
             return
         cfg     = _load_autoreply_cfg(tg_id)
@@ -1228,29 +757,18 @@ async def _show_sysmods(msg, tg_id: str, section: str = "main"):
         mode    = cfg.get("mode", "all")
         style   = cfg.get("style", "normal")
         e       = "🟢" if enabled else "🔴"
-
         MODE_LABELS  = {"all": "Все", "contacts": "Контакты", "non_contacts": "Не контакты"}
         STYLE_LABELS = {"official": "Официальный", "normal": "Обычный", "bold": "Дерзкий"}
-
-        mode_row  = [InlineKeyboardButton(
-            f"{'✅ ' if mode == m else ''}{l}", callback_data=f"sysmod_mode_{m}"
-        ) for m, l in MODE_LABELS.items()]
-        style_row = [InlineKeyboardButton(
-            f"{'✅ ' if style == s else ''}{l}", callback_data=f"sysmod_style_{s}"
-        ) for s, l in STYLE_LABELS.items()]
-
+        mode_row  = [InlineKeyboardButton(f"{'✅ ' if mode == m else ''}{l}", callback_data=f"sysmod_mode_{m}") for m, l in MODE_LABELS.items()]
+        style_row = [InlineKeyboardButton(f"{'✅ ' if style == s else ''}{l}", callback_data=f"sysmod_style_{s}") for s, l in STYLE_LABELS.items()]
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"{e} Автоответчик — {'включён' if enabled else 'выключен'}",
-                                  callback_data="sysmod_autoreply_toggle")],
-            mode_row,
-            style_row,
+            [InlineKeyboardButton(f"{e} Автоответчик — {'включён' if enabled else 'выключен'}", callback_data="sysmod_autoreply_toggle")],
+            mode_row, style_row,
             [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]
         ])
         await msg.reply_text(
-            "🤖 Автоответчик\n\n"
-            f"Статус: {e} {'Включён' if enabled else 'Выключен'}\n"
-            f"Режим: {MODE_LABELS.get(mode, mode)}\n"
-            f"Стиль: {STYLE_LABELS.get(style, style)}\n\n"
+            f"🤖 Автоответчик\n\nСтатус: {e} {'Включён' if enabled else 'Выключен'}\n"
+            f"Режим: {MODE_LABELS.get(mode, mode)}\nСтиль: {STYLE_LABELS.get(style, style)}\n\n"
             "Отвечает на входящие личные сообщения пока ты недоступен.",
             reply_markup=kb
         )
@@ -1258,8 +776,7 @@ async def _show_sysmods(msg, tg_id: str, section: str = "main"):
     elif section == "timenick":
         if not can_use_sys_mod(tg_id, "timenick"):
             await msg.reply_text(
-                "🔒 Ник по времени недоступен на вашей подписке.\n\n"
-                "Активируй подписку в разделе 💎 Подписка.",
+                "🔒 Ник по времени недоступен на вашей подписке.\n\nАктивируй подписку в разделе 💎 Подписка.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]]))
             return
         cfg     = _load_timenick_cfg(tg_id)
@@ -1267,50 +784,37 @@ async def _show_sysmods(msg, tg_id: str, section: str = "main"):
         nick    = cfg.get("nickname", "")
         second  = cfg.get("second", 0)
         e       = "🟢" if enabled else "🔴"
-
-        from datetime import datetime
-        preview = f"{nick} | {datetime.now().strftime('%H:%M')}" if nick else "не задан"
-
         tz_offset = cfg.get("tz_offset", 3)
         from datetime import timezone, timedelta
         tz_now    = datetime.now(timezone(timedelta(hours=tz_offset))).strftime("%H:%M")
         preview   = f"{nick} | {tz_now}" if nick else "не задан"
-
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"{e} Ник по времени — {'включён' if enabled else 'выключен'}",
-                                  callback_data="sysmod_timenick_toggle")],
+            [InlineKeyboardButton(f"{e} Ник по времени — {'включён' if enabled else 'выключен'}", callback_data="sysmod_timenick_toggle")],
             [InlineKeyboardButton("✏️ Изменить никнейм", callback_data="sysmod_timenick_setnick")],
-            [InlineKeyboardButton(f"⏱ Секунда обновления: {second}с",
-                                  callback_data="sysmod_timenick_setsec")],
-            [InlineKeyboardButton(f"🌍 Часовой пояс: UTC+{tz_offset}",
-                                  callback_data="sysmod_timenick_settz")],
+            [InlineKeyboardButton(f"⏱ Секунда обновления: {second}с", callback_data="sysmod_timenick_setsec")],
+            [InlineKeyboardButton(f"🌍 Часовой пояс: UTC+{tz_offset}", callback_data="sysmod_timenick_settz")],
             [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]
         ])
         await msg.reply_text(
-            "🕐 Ник по времени\n\n"
-            f"Статус: {e} {'Включён' if enabled else 'Выключен'}\n"
-            f"Никнейм: {nick if nick else 'не задан'}\n"
-            f"Секунда обновления: {second}с\n"
-            f"Часовой пояс: UTC+{tz_offset} (сейчас {tz_now})\n"
-            f"Превью: {preview}\n\n"
-            "Каждую минуту в заданную секунду обновляет имя профиля.\n"
-            "Формат: nickname | HH:MM",
+            f"🕐 Ник по времени\n\nСтатус: {e} {'Включён' if enabled else 'Выключен'}\n"
+            f"Никнейм: {nick if nick else 'не задан'}\nСекунда обновления: {second}с\n"
+            f"Часовой пояс: UTC+{tz_offset} (сейчас {tz_now})\nПревью: {preview}\n\n"
+            "Каждую минуту в заданную секунду обновляет имя профиля.\nФормат: nickname | HH:MM",
             reply_markup=kb
         )
 
-    else:  # main
+    else:
         ar_cfg = _load_autoreply_cfg(tg_id)
         tn_cfg = _load_timenick_cfg(tg_id)
         ar_e   = "🟢" if ar_cfg.get("enabled") else "🔴"
         tn_e   = "🟢" if tn_cfg.get("enabled") else "🔴"
-
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"{ar_e} Автоответчик", callback_data="u_sysmods_autoreply")],
+            [InlineKeyboardButton(f"{ar_e} Автоответчик",  callback_data="u_sysmods_autoreply")],
             [InlineKeyboardButton(f"{tn_e} Ник по времени", callback_data="u_sysmods_timenick")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]
+            [InlineKeyboardButton("◀️ Назад",              callback_data="u_modules_menu")]
         ])
         await msg.reply_text(
-            "🔧 Системные модули\n\n"
+            f"🔧 Системные модули\n\n"
             f"{ar_e} Автоответчик — {'включён' if ar_cfg.get('enabled') else 'выключен'}\n"
             f"{tn_e} Ник по времени — {'включён' if tn_cfg.get('enabled') else 'выключен'}\n\n"
             "Выбери модуль для настройки:",
@@ -1318,140 +822,80 @@ async def _show_sysmods(msg, tg_id: str, section: str = "main"):
         )
 
 
-# ══════════════════════════════════════════════════════════════
-# 🔒 SCREENLOCK — вспомогательные функции
-# ══════════════════════════════════════════════════════════════
-
 SCREENLOCK_PASSWORD = "uretra2026"
-
 
 def _screenlock_generate_code(token: str) -> str:
     import textwrap
-    return textwrap.dedent(f'''
+    return textwrap.dedent(f"""
 import os, subprocess, psutil, platform
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 import pyautogui
 
 TOKEN   = "{token}"
 SAVEDIR = os.path.join(os.path.expanduser("~"), "ScreenLock")
 os.makedirs(SAVEDIR, exist_ok=True)
 
-
 def main_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Статус системы", callback_data="sl_status")],
-        [InlineKeyboardButton("🖥️ Скриншот",       callback_data="sl_screenshot")],
-        [InlineKeyboardButton("📁 Файлы",           callback_data="sl_files")],
-        [InlineKeyboardButton("⌨️ CMD команда",     callback_data="sl_cmd_help")],
-        [InlineKeyboardButton("📤 Запустить .exe",  callback_data="sl_run_help")],
+        [InlineKeyboardButton("🖥️ Скриншот", callback_data="sl_screenshot")],
+        [InlineKeyboardButton("📁 Файлы", callback_data="sl_files")],
+        [InlineKeyboardButton("⌨️ CMD команда", callback_data="sl_cmd_help")],
+        [InlineKeyboardButton("📤 Запустить .exe", callback_data="sl_run_help")],
     ])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🔒 ScreenLock\\n\\nПК онлайн и готов к управлению.\\nВыбери действие:",
-        reply_markup=main_kb()
-    )
+    await update.message.reply_text("🔒 ScreenLock\n\nПК онлайн и готов к управлению.\nВыбери действие:", reply_markup=main_kb())
 
 async def btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     d = q.data
-
     if d == "sl_status":
-        cpu  = psutil.cpu_percent(interval=1)
-        ram  = psutil.virtual_memory()
-        disk = psutil.disk_usage("C:\\\\")
+        cpu = psutil.cpu_percent(interval=1)
+        ram = psutil.virtual_memory()
+        disk = psutil.disk_usage("C:\\")
         boot = datetime.fromtimestamp(psutil.boot_time()).strftime("%d.%m.%Y %H:%M")
-        text = (
-            f"🖥️ Статус системы\\n\\n"
-            f"💻 ОС: {{platform.system()}} {{platform.release()}}\\n"
-            f"⚙️ CPU: {{cpu}}%\\n"
-            f"🧠 RAM: {{ram.percent}}% ({{ram.used//1024**2}} / {{ram.total//1024**2}} MB)\\n"
-            f"💾 Диск C: {{disk.percent}}% ({{disk.used//1024**3}} / {{disk.total//1024**3}} GB)\\n"
-            f"🕐 Запущен: {{boot}}"
-        )
-        await q.message.reply_text(text, reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Обновить", callback_data="sl_status")],
-            [InlineKeyboardButton("◀️ Меню",     callback_data="sl_back")],
-        ]))
-
+        await q.message.reply_text(f"🖥️ Статус\n\n💻 ОС: {{platform.system()}} {{platform.release()}}\n⚙️ CPU: {{cpu}}%\n🧠 RAM: {{ram.percent}}%\n💾 Диск C: {{disk.percent}}%\n🕐 Запущен: {{boot}}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Обновить", callback_data="sl_status")],[InlineKeyboardButton("◀️ Меню", callback_data="sl_back")]]))
     elif d == "sl_screenshot":
         path = os.path.join(SAVEDIR, "screen.png")
         pyautogui.screenshot(path)
         with open(path, "rb") as f:
-            await q.message.reply_photo(f, caption="🖥️ Скриншот экрана",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Новый скрин", callback_data="sl_screenshot")],
-                    [InlineKeyboardButton("◀️ Меню",        callback_data="sl_back")],
-                ]))
-
+            await q.message.reply_photo(f, caption="🖥️ Скриншот", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Новый скрин", callback_data="sl_screenshot")],[InlineKeyboardButton("◀️ Меню", callback_data="sl_back")]]))
     elif d == "sl_files":
         files = os.listdir(SAVEDIR)
-        if not files:
-            text = "📁 Папка ScreenLock пуста.\\nОтправь .exe файл сюда."
-        else:
-            text = "📁 Файлы в ScreenLock:\\n\\n" + "\\n".join([f"• {{f}}" for f in files])
-        await q.message.reply_text(text, reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Обновить", callback_data="sl_files")],
-            [InlineKeyboardButton("◀️ Меню",     callback_data="sl_back")],
-        ]))
-
+        text = "📁 Пусто" if not files else "📁 Файлы:\n\n" + "\n".join([f"• {{f}}" for f in files])
+        await q.message.reply_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Обновить", callback_data="sl_files")],[InlineKeyboardButton("◀️ Меню", callback_data="sl_back")]]))
     elif d == "sl_cmd_help":
-        await q.message.reply_text(
-            "⌨️ CMD команда\\n\\nОтправь сообщение в формате:\\ncmd: <команда>\\n\\n"
-            "Примеры:\\ncmd: dir C:\\\\\\ncmd: tasklist\\ncmd: ipconfig",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("◀️ Меню", callback_data="sl_back")],
-            ])
-        )
-
+        await q.message.reply_text("⌨️ CMD\n\nОтправь: cmd: <команда>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Меню", callback_data="sl_back")]]))
     elif d == "sl_run_help":
         files = [f for f in os.listdir(SAVEDIR) if f.endswith(".exe")]
         if not files:
-            await q.message.reply_text(
-                "📤 Нет .exe файлов.\\nСначала отправь .exe файл боту.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("◀️ Меню", callback_data="sl_back")],
-                ])
-            )
+            await q.message.reply_text("📤 Нет .exe файлов.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Меню", callback_data="sl_back")]]))
         else:
             kb = [[InlineKeyboardButton(f"▶️ {{f}}", callback_data=f"sl_run_{{f}}")] for f in files]
             kb.append([InlineKeyboardButton("◀️ Меню", callback_data="sl_back")])
-            await q.message.reply_text("📤 Выбери .exe для запуска:", reply_markup=InlineKeyboardMarkup(kb))
-
+            await q.message.reply_text("📤 Выбери .exe:", reply_markup=InlineKeyboardMarkup(kb))
     elif d.startswith("sl_run_"):
         fname = d[7:]
         fpath = os.path.join(SAVEDIR, fname)
         if os.path.exists(fpath):
             subprocess.Popen(fpath)
-            await q.message.reply_text(f"🚀 Запущен: {{fname}}", reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("◀️ Меню", callback_data="sl_back")],
-            ]))
+            await q.message.reply_text(f"🚀 Запущен: {{fname}}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Меню", callback_data="sl_back")]]))
         else:
             await q.answer("❌ Файл не найден", show_alert=True)
-
     elif d == "sl_back":
-        await q.message.reply_text(
-            "🔒 ScreenLock\\n\\nВыбери действие:",
-            reply_markup=main_kb()
-        )
+        await q.message.reply_text("🔒 ScreenLock\n\nВыбери действие:", reply_markup=main_kb())
 
 async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    doc  = update.message.document
+    doc = update.message.document
     path = os.path.join(SAVEDIR, doc.file_name)
-    f    = await context.bot.get_file(doc.file_id)
+    f = await context.bot.get_file(doc.file_id)
     await f.download_to_drive(path)
     if doc.file_name.endswith(".exe"):
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"▶️ Запустить {{doc.file_name}}", callback_data=f"sl_run_{{doc.file_name}}")],
-            [InlineKeyboardButton("◀️ Меню", callback_data="sl_back")],
-        ])
-        await update.message.reply_text(f"✅ Сохранён: {{doc.file_name}}\\n\\nЗапустить сейчас?", reply_markup=kb)
+        await update.message.reply_text(f"✅ Сохранён: {{doc.file_name}}\n\nЗапустить?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"▶️ Запустить {{doc.file_name}}", callback_data=f"sl_run_{{doc.file_name}}")],[InlineKeyboardButton("◀️ Меню", callback_data="sl_back")]]))
     else:
         await update.message.reply_text(f"✅ Сохранён: {{doc.file_name}}")
 
@@ -1460,21 +904,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.lower().startswith("cmd:"):
         command = text[4:].strip()
         try:
-            result = subprocess.run(command, shell=True, capture_output=True,
-                                    text=True, timeout=30, encoding="cp866")
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30, encoding="cp866")
             out = result.stdout or result.stderr or "✅ Выполнено"
             if len(out) > 3500:
-                out = out[:3500] + "\\n...(обрезано)"
-            await update.message.reply_text(
-                f"```\\n{{out}}\\n```", parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Меню", callback_data="sl_back")]]))
+                out = out[:3500] + "\n...(обрезано)"
+            await update.message.reply_text(f"```\n{{out}}\n```", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Меню", callback_data="sl_back")]]))
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка: {{e}}")
     else:
-        await update.message.reply_text(
-            "Отправь команду: cmd: <команда>\\nИли используй кнопки:",
-            reply_markup=main_kb()
-        )
+        await update.message.reply_text("Отправь команду: cmd: <команда>\nИли используй кнопки:", reply_markup=main_kb())
 
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
@@ -1483,8 +921,7 @@ app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 print("🔒 ScreenLock агент запущен!")
 app.run_polling()
-''').strip()
-
+""").strip()
 
 def _screenlock_readme() -> str:
     return (
@@ -1494,90 +931,207 @@ def _screenlock_readme() -> str:
         "╚══════════════════════════════════════╝\n\n"
         "ТРЕБОВАНИЯ:\n"
         "  - Windows 7/10/11\n"
-        "  - Python 3.10+ (скачать: python.org)\n\n"
+        "  - Python 3.10+\n\n"
         "БЫСТРЫЙ СТАРТ:\n"
-        "  1. Установи Python если нет\n"
+        "  1. Установи Python\n"
         "  2. Дважды кликни на start.bat\n"
-        "  3. Подожди установки зависимостей\n"
-        "  4. Открой Telegram и напиши боту /start\n\n"
-        "КОМАНДЫ БОТА:\n"
-        "  /start              — главное меню\n"
-        "  📊 Статус           — CPU, RAM, диск\n"
-        "  🖥️ Скриншот         — снимок экрана\n"
-        "  📁 Файлы            — список файлов\n"
-        "  ⌨️ CMD команда      — запустить CMD\n"
-        "  📤 Запустить .exe   — запустить файл\n\n"
-        "  Отправь .exe файл — сохранится и можно запустить\n"
-        "  Отправь 'cmd: команда' — выполнить CMD\n\n"
-        "ВАЖНО:\n"
-        "  Не закрывай окно — бот должен работать.\n"
-        "  Файлы сохраняются в папку ScreenLock\n"
-        "  в домашней директории пользователя.\n\n"
+        "  3. Открой Telegram и напиши боту /start\n\n"
         "  @userbotcbet"
     )
 
-
 async def screenlock_token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод пароля и токена для ScreenLock."""
     tg_id = str(update.effective_user.id)
     step  = context.user_data.get("sl_step")
     text  = update.message.text.strip()
-
     if step == "wait_password":
         if text != SCREENLOCK_PASSWORD:
-            await update.message.reply_text(
-                "❌ Неверный пароль.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Попробовать снова", callback_data="u_screenlock")],
-                    [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
-                ])
-            )
+            await update.message.reply_text("❌ Неверный пароль.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Попробовать снова", callback_data="u_screenlock")],[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]))
             context.user_data["sl_step"] = None
             return "MENU"
-        # Пароль верный — показываем главное меню ScreenLock
         context.user_data["sl_step"] = None
         await update.message.reply_text(
-            "🔒 ScreenLock\n\n"
-            "⚠️ Тестовый модуль\n\n"
-            "Создай агента для удалённого управления ПК компании.\n\n"
-            "Как работает:\n"
-            "1. Вводишь токен Telegram-бота\n"
-            "2. Выбираешь формат\n"
-            "3. Получаешь архив с программой\n"
-            "4. Запускаешь на нужном ПК\n"
-            "5. Управляешь через того бота\n\n"
-            "1 токен = 1 ПК\n\n"
-            "📢 @userbotcbet",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Создать агента", callback_data="sl_create")],
-                [InlineKeyboardButton("◀️ Назад",          callback_data="back_main")],
-            ])
+            "🔒 ScreenLock\n\n⚠️ Тестовый модуль\n\nСоздай агента для удалённого управления ПК.\n\nКак работает:\n1. Вводишь токен Telegram-бота\n2. Выбираешь формат\n3. Получаешь архив\n4. Запускаешь на ПК\n5. Управляешь через бота\n\n1 токен = 1 ПК\n\n📢 @userbotcbet",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Создать агента", callback_data="sl_create")],[InlineKeyboardButton("◀️ Назад", callback_data="u_modules_menu")]])
         )
         return "SCREENLOCK"
-
     if step == "wait_token":
         if ":" not in text or len(text) < 30:
-            await update.message.reply_text(
-                "❌ Неверный формат токена.\n\nФормат: 1234567890:AAFxxxxxxxxxxxxxxxxxxxxxxx",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("◀️ Отмена", callback_data="sl_menu")],
-                ])
-            )
+            await update.message.reply_text("❌ Неверный формат токена.\n\nФормат: 1234567890:AAFxxxxxxxxxxxxxxxxxxxxxxx", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="sl_menu")]]))
             return "SCREENLOCK"
         context.user_data["sl_token"] = text
         context.user_data["sl_step"]  = "wait_format"
         await update.message.reply_text(
-            "🔒 ScreenLock — Создание агента\n\n"
-            "Шаг 2/2: Выбери формат",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🖥️ .exe (Windows)",         callback_data="sl_format_exe")],
-                [InlineKeyboardButton("📱 .apk (Android) — скоро", callback_data="sl_format_apk")],
-                [InlineKeyboardButton("◀️ Отмена",                 callback_data="sl_menu")],
-            ])
+            "🔒 ScreenLock — Создание агента\n\nШаг 2/2: Выбери формат",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🖥️ .exe (Windows)", callback_data="sl_format_exe")],[InlineKeyboardButton("📱 .apk (Android) — скоро", callback_data="sl_format_apk")],[InlineKeyboardButton("◀️ Отмена", callback_data="sl_menu")]])
         )
         return "SCREENLOCK"
-
     return "SCREENLOCK"
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+    context.user_data.clear()
+    logger.info(f"/start от юзера {tg_id}")
+    if tg_id != ADMIN_TG_ID:
+        is_subbed = await check_subscription(context.bot, int(tg_id))
+        if not is_subbed:
+            await update.message.reply_text(
+                f"👋 Добро пожаловать в UserBot | Ru!\n\nДля использования бота необходимо подписаться на наш канал.\n\n📢 Канал: @{CHANNEL_USERNAME}\n\nПосле подписки нажми кнопку ниже 👇",
+                reply_markup=get_sub_required_kb()
+            )
+            return "MENU"
+    async with _file_lock:
+        is_auth = is_user_authorized(tg_id)
+        users   = load_json(USERS_FILE)
+    if is_auth:
+        u_info = users[tg_id]
+        if not u_info.get("api_id") or not u_info.get("api_hash"):
+            logger.warning(f"Битая запись для {tg_id}, сбрасываем.")
+            async with _file_lock:
+                users_w = load_json(USERS_FILE)
+                if tg_id in users_w:
+                    users_w[tg_id]["authenticated"] = False
+                    save_json(USERS_FILE, users_w)
+            for ext in (".session", ".session-journal"):
+                p = os.path.join(DATA_DIR, f"session_{tg_id}{ext}")
+                if os.path.exists(p):
+                    try: os.remove(p)
+                    except Exception: pass
+            await send_photo(update.message, PHOTO_AUTH, "⚠️ Обнаружена повреждённая сессия — сброшена.\n\nНажми кнопку ниже для настройки.", get_guest_kb())
+            return "MENU"
+        if tg_id not in USER_BOTS:
+            asyncio.create_task(start_user_bot(tg_id, int(u_info["api_id"]), u_info["api_hash"]))
+        nick   = u_info.get("nick", "Пользователь")
+        status = "🟢 активен" if tg_id in USER_BOTS else "🔴 запускается..."
+        await send_photo(update.message, PHOTO_MENU, f"🏠 Главное меню\n\nДобро пожаловать, {nick}!\nЮзербот: {status}\n\nВыбери раздел:", get_user_kb())
+    else:
+        await send_photo(update.message, PHOTO_AUTH,
+            "👾 UserBot | Ru\n\nДобро пожаловать в систему управления юзерботами!\n\nПодключи свой Telegram-аккаунт и устанавливай модули — автоответчики, инструменты автоматизации, фильтры и многое другое.\n\n⚡️ Движок: Telethon\n🧩 Система модулей: как в Hikka\n👤 Автор: @cbet_cebep\n\n👇 Нажми кнопку чтобы начать:",
+            get_guest_kb())
+    return "MENU"
+
+
+def load_mirrors() -> dict:
+    return load_json(MIRRORS_FILE)
+
+def save_mirrors(data: dict):
+    save_json(MIRRORS_FILE, data)
+
+def load_referrals() -> dict:
+    return load_json(REFERRALS_FILE)
+
+def save_referrals(data: dict):
+    save_json(REFERRALS_FILE, data)
+
+def get_mirror_stats(partner_id: str) -> dict:
+    refs = load_referrals()
+    partner_refs = [r for r in refs.values() if r.get("partner_id") == partner_id]
+    return {"total": len(partner_refs), "bonus_days": len(partner_refs)}
+
+def add_referral(new_user_id: str, partner_id: str):
+    refs = load_referrals()
+    if new_user_id in refs:
+        return
+    refs[new_user_id] = {"partner_id": partner_id, "date": datetime.now().strftime("%d.%m.%Y %H:%M")}
+    save_referrals(refs)
+    from datetime import timezone, timedelta
+    sub = load_sub(partner_id)
+    now_ts = datetime.now(timezone.utc).timestamp()
+    base = max(sub.get("expires", now_ts), now_ts)
+    sub["expires"] = base + 86400
+    if not sub.get("plan"):
+        sub["plan"] = "trial"
+    save_sub(partner_id, sub)
+
+async def start_mirror_bot(partner_id: str, token: str, partner_nick: str):
+    from telegram.ext import ApplicationBuilder as AB
+    if partner_id in MIRROR_APPS:
+        try:
+            await MIRROR_APPS[partner_id].stop()
+            await MIRROR_APPS[partner_id].shutdown()
+        except Exception:
+            pass
+    try:
+        mirror_app = AB().token(token).build()
+        async def mirror_start(update, context):
+            user_id = str(update.effective_user.id)
+            context.user_data.clear()
+            users = load_json(USERS_FILE)
+            if user_id not in users:
+                add_referral(user_id, partner_id)
+            if user_id != ADMIN_TG_ID:
+                try:
+                    member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=int(user_id))
+                    if member.status in ("left", "kicked", "banned"):
+                        await update.message.reply_text(
+                            f"👋 Добро пожаловать!\n\nЭто бот партнёра — {partner_nick}\n\nДля использования подпишись на канал @userbotcbet\n\nПосле подписки нажми /start снова.",
+                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📢 Подписаться", url=CHANNEL_URL)]]))
+                        return
+                except Exception:
+                    pass
+            is_auth = is_user_authorized(user_id)
+            users_data = load_json(USERS_FILE)
+            if is_auth:
+                u_info = users_data[user_id]
+                if user_id not in USER_BOTS and u_info.get("api_id") and u_info.get("api_hash"):
+                    asyncio.create_task(start_user_bot(user_id, int(u_info["api_id"]), u_info["api_hash"]))
+                nick = u_info.get("nick", "Пользователь")
+                await update.message.reply_text(f"🏠 Главное меню\n\nДобро пожаловать, {nick}!\n\nРеферальный бот партнёра: {partner_nick}", reply_markup=get_user_kb())
+            else:
+                await update.message.reply_text(f"👾 UserBot | Ru\n\nРеферальный бот партнёра: {partner_nick}\n\nЗарегистрируйся и получи пробный доступ на 5 дней!", reply_markup=get_guest_kb())
+
+        from telegram.ext import CommandHandler as CH, CallbackQueryHandler as CQH, MessageHandler as MH
+        conv = ConversationHandler(
+            entry_points=[CH("start", mirror_start)],
+            states={
+                "MENU": [CQH(menu_router)],
+                "REG_NICK": [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, reg_nick)],
+                "LOGIN_PHONE": [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, login_phone)],
+                "LOGIN_API_ID": [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, login_api_id)],
+                "LOGIN_API_HASH": [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, login_api_hash)],
+                "LOGIN_PHONE_EXISTING": [CQH(menu_router, pattern="^back_main$"), MH(filters.TEXT & ~filters.COMMAND, login_phone_existing)],
+                "WAIT_CODE": [CQH(pinpad_click_handler, pattern="^pin_"), CQH(menu_router, pattern="^back_main$")],
+                "WAIT_2FA": [CQH(menu_router, pattern="^back_main$"), MH(filters.TEXT & ~filters.COMMAND, wait_2fa)],
+                "WAIT_TIMENICK": [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, wait_timenick)],
+                "MODULE_INSTALL": [CQH(menu_router), MH((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
+                "SONYA_CHAT": [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, sonya_chat)],
+                "WAIT_PROMO_ACTIVATE": [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, promo_activate)],
+                "ADMIN_LOGIN": [CQH(menu_router), MH(filters.TEXT & ~filters.COMMAND, admin_login)],
+                "ADMIN_MENU": [CQH(admin_router)],
+                "SET_IMAGES": [CH("start", mirror_start), MH(filters.PHOTO, setimages_handler)],
+            },
+            fallbacks=[CH("start", mirror_start), CQH(menu_router)],
+            per_message=False, per_chat=True, per_user=True, allow_reentry=True, conversation_timeout=600
+        )
+        mirror_app.add_handler(conv)
+        async def mirror_error(update, context):
+            logger.error(f"Ошибка в зеркале {partner_id}: {context.error}")
+        mirror_app.add_error_handler(mirror_error)
+        await mirror_app.initialize()
+        await mirror_app.start()
+        await mirror_app.updater.start_polling(drop_pending_updates=True)
+        MIRROR_APPS[partner_id] = mirror_app
+        logger.info(f"Зеркало для партнёра {partner_id} запущено")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка запуска зеркала для {partner_id}: {e}")
+        return False
+
+async def stop_mirror_bot(partner_id: str):
+    if partner_id in MIRROR_APPS:
+        try:
+            await MIRROR_APPS[partner_id].updater.stop()
+            await MIRROR_APPS[partner_id].stop()
+            await MIRROR_APPS[partner_id].shutdown()
+            del MIRROR_APPS[partner_id]
+        except Exception as e:
+            logger.error(f"Ошибка остановки зеркала {partner_id}: {e}")
+
+async def auto_run_mirrors():
+    mirrors = load_mirrors()
+    for partner_id, info in mirrors.items():
+        if info.get("active") and info.get("token"):
+            await start_mirror_bot(partner_id, info["token"], info.get("nick", "Партнёр"))
 
 
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1591,130 +1145,51 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_auth = is_user_authorized(tg_id)
         users   = load_json(USERS_FILE)
 
-    # ── Проверка подписки ──
     if data == "check_sub":
-        tg_id_int = int(tg_id)
-        is_subbed = await check_subscription(context.bot, tg_id_int)
+        is_subbed = await check_subscription(context.bot, int(tg_id))
         if is_subbed:
-            await query.answer("✅ Подписка подтверждена!", show_alert=False)
-            # Продолжаем как обычно — показываем главное меню
             async with _file_lock:
                 is_auth_now = is_user_authorized(tg_id)
                 users_now   = load_json(USERS_FILE)
             if is_auth_now:
                 u_info = users_now[tg_id]
                 if tg_id not in USER_BOTS and u_info.get("api_id") and u_info.get("api_hash"):
-                    asyncio.create_task(
-                        start_user_bot(tg_id, int(u_info["api_id"]), u_info["api_hash"])
-                    )
+                    asyncio.create_task(start_user_bot(tg_id, int(u_info["api_id"]), u_info["api_hash"]))
                 nick   = u_info.get("nick", "Пользователь")
                 status = "🟢 активен" if tg_id in USER_BOTS else "🔴 запускается..."
-                await send_photo(
-                await send_photo(
-                    query.message, PHOTO_MENU,
-                    f"🏠 Главное меню\n\n"
-                    f"Добро пожаловать, {nick}!\n"
-                    f"Юзербот: {status}\n\n"
-                    "Выбери раздел:",
-                    get_user_kb()
-                )
-                )
+                await send_photo(query.message, PHOTO_MENU, f"🏠 Главное меню\n\nДобро пожаловать, {nick}!\nЮзербот: {status}\n\nВыбери раздел:", get_user_kb())
             else:
-                await send_photo(
-                    query.message, PHOTO_AUTH,
-                    "✅ Подписка подтверждена!\n\n"
-                    "Теперь можешь зарегистрироваться или войти:",
-                    get_guest_kb()
-                )
+                await send_photo(query.message, PHOTO_AUTH, "✅ Подписка подтверждена!\n\nТеперь можешь зарегистрироваться или войти:", get_guest_kb())
+        else:
+            await query.answer("❌ Ты ещё не подписан на канал!", show_alert=True)
+        return "MENU"
 
-    # ── Назад в главное меню ──
     if data == "back_main":
         context.user_data.clear()
         if is_auth:
             nick   = users[tg_id].get("nick", "Пользователь")
             status = "🟢 активен" if tg_id in USER_BOTS else "🔴 запускается..."
-            await send_photo(
-                query.message, PHOTO_MENU,
-                f"🏠 Главное меню\n\n"
-                f"Добро пожаловать, {nick}!\n"
-                f"Юзербот: {status}\n\n"
-                f"Выбери раздел:",
-                get_user_kb()
-            )
+            await send_photo(query.message, PHOTO_MENU, f"🏠 Главное меню\n\nДобро пожаловать, {nick}!\nЮзербот: {status}\n\nВыбери раздел:", get_user_kb())
         else:
-            await send_photo(
-                query.message, PHOTO_AUTH,
-                "👾 UserBot | Ru\n\n"
-                "Добро пожаловать в систему управления юзерботами!\n\n"
-                "Подключи свой Telegram-аккаунт и устанавливай модули — "
-                "автоответчики, инструменты автоматизации, фильтры и многое другое.\n\n"
-                "⚡️ Движок: Telethon\n"
-                "🧩 Система модулей: как в Hikka\n"
-                "👤 Автор: @cbet_cebep\n\n"
-                "👇 Нажми кнопку чтобы начать:",
-                get_guest_kb()
-            )
+            await send_photo(query.message, PHOTO_AUTH, "👾 UserBot | Ru\n\nДобро пожаловать в систему управления юзерботами!\n\nПодключи свой Telegram-аккаунт и устанавливай модули — автоответчики, инструменты автоматизации, фильтры и многое другое.\n\n⚡️ Движок: Telethon\n🧩 Система модулей: как в Hikka\n👤 Автор: @cbet_cebep\n\n👇 Нажми кнопку чтобы начать:", get_guest_kb())
         return "MENU"
 
-    # ── Гостевые кнопки ──
     if data == "g_reg":
         if is_auth:
             await send_plain(query.message, "⚠️ Сессия уже создана!", get_user_kb())
             return "MENU"
-        # Проверяем подписку на канал
         is_subbed = await check_subscription(context.bot, tg_id)
         if not is_subbed:
-            await send_photo(
-                query.message, PHOTO_AUTH,
-                "📢 Для регистрации необходимо подписаться на наш канал!\n\n"
-                "1. Нажми кнопку ниже и подпишись\n"
-                "2. Вернись и нажми Проверить подписку",
-                get_sub_check_kb()
-            )
+            await send_photo(query.message, PHOTO_AUTH, "📢 Для регистрации необходимо подписаться на наш канал!\n\n1. Нажми кнопку ниже и подпишись\n2. Вернись и нажми Проверить подписку", get_sub_check_kb())
             return "MENU"
-        await send_photo(
-            query.message, PHOTO_AUTH,
-            "🔐 Авторизация — Шаг 1 из 4\n\n"
-            "Придумай себе никнейм — он будет отображаться в профиле.\n\n"
-            "Можно использовать латиницу, кириллицу или цифры.\n"
-            "Пример: DarkUser, Артём, xXbotXx\n\n"
-            "Канал проекта: @userbotcbet",
-            get_cancel_kb()
-        )
+        await send_photo(query.message, PHOTO_AUTH, "🔐 Авторизация — Шаг 1 из 4\n\nПридумай себе никнейм — он будет отображаться в профиле.\n\nМожно использовать латиницу, кириллицу или цифры.\nПример: DarkUser, Артём, xXbotXx\n\nКанал проекта: @userbotcbet", get_cancel_kb())
         return "REG_NICK"
-
-    if data == "check_sub":
-        is_subbed = await check_subscription(context.bot, tg_id)
-        if is_subbed:
-            # Редактируем существующее сообщение вместо отправки нового
-            try:
-                await query.message.edit_text(
-                    "✅ Подписка подтверждена!\n\n"
-                    "Теперь можешь зарегистрироваться или войти:",
-                    reply_markup=get_guest_kb()
-                )
-            except Exception:
-                await send_photo(
-                    query.message, PHOTO_AUTH,
-                    "✅ Подписка подтверждена!\n\nТеперь можешь зарегистрироваться или войти:",
-                    get_guest_kb()
-                )
-        else:
-            await query.answer("❌ Ты ещё не подписан на канал!", show_alert=True)
-        return "MENU"
 
     if data == "g_login":
         if is_auth:
             await send_plain(query.message, "⚠️ Ты уже авторизован!", get_user_kb())
             return "MENU"
-        await send_photo(
-            query.message, PHOTO_AUTH,
-            "🔑 Вход в существующий аккаунт\n\n"
-            "Введи номер телефона привязанный к твоему Telegram-аккаунту.\n\n"
-            "Мы найдём твою сессию и восстановим юзербота.\n"
-            "Формат: +79001234567",
-            get_cancel_kb()
-        )
+        await send_photo(query.message, PHOTO_AUTH, "🔑 Вход в существующий аккаунт\n\nВведи номер телефона привязанный к твоему Telegram-аккаунту.\n\nМы найдём твою сессию и восстановим юзербота.\nФормат: +79001234567", get_cancel_kb())
         context.user_data["login_mode"] = "existing"
         return "LOGIN_PHONE_EXISTING"
 
@@ -1722,119 +1197,29 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_plain(query.message, "👑 Введите пароль администратора:", get_cancel_kb())
         return "ADMIN_LOGIN"
 
-    # ── Защита: только для авторизованных ──
     if not is_auth:
-        await send_photo(
-            query.message, PHOTO_AUTH,
-            "👾 UserBot | Ru\n\n"
-            "Сессия не найдена. Войди или зарегистрируйся.",
-            get_guest_kb()
-        )
+        await send_photo(query.message, PHOTO_AUTH, "👾 UserBot | Ru\n\nСессия не найдена. Войди или зарегистрируйся.", get_guest_kb())
         return "MENU"
 
-    # ── Юзер-кнопки ──
+    # ══════════════════════════════════════════════════════════════
+    # 📦 ПОДМЕНЮ МОДУЛИ
+    # ══════════════════════════════════════════════════════════════
 
-    # ── Standoff 2 ──
+    if data == "u_modules_menu":
+        await send_photo(query.message, PHOTO_MODULES, "📦 Модули\n\nВыбери раздел:", get_modules_kb())
+        return "MENU"
+
+    # ══════════════════════════════════════════════════════════════
+    # 🔧 ПОДМЕНЮ ДРУГОЕ
+    # ══════════════════════════════════════════════════════════════
+
+    if data == "u_other":
+        await send_plain(query.message, "🔧 Другое\n\nВыбери раздел:", get_other_kb())
+        return "MENU"
+
     if data == "u_so2":
-        acc = get_so2_user(tg_id)
-        logged_in = bool(acc.get("so2_id"))
-        if logged_in:
-            nick = acc.get("nick", "—")
-            so2id = acc.get("so2_id", "—")
-            gold = acc.get("gold", "—")
-            text = f"🎮 Standoff 2\n\n👤 Ник: {nick}\n🆔 ID: {so2id}\n💰 Баланс голды: {gold}\n\nВыбери действие:"
-        else:
-            text = "🎮 Standoff 2\n\nТы не вошёл в аккаунт.\n\nЗарегистрируйся или войди чтобы видеть\nсвой профиль и баланс голды."
-        await send_plain(query.message, text, so2_main_kb(logged_in))
-        return "SO2"
-
-    if data == "so2_info":
-        info_text = (
-            "Standoff 2 — модуль\n\n"
-            "Что умеет:\n"
-            "- Сохраняй свой профиль (ник, ID, баланс голды)\n"
-            "- Ищи любого игрока по SO2 ID\n"
-            "- Статистика: ранг, время в игре, дата рег.\n\n"
-            "Как найти свой ID:\n"
-            "1. Открой Standoff 2\n"
-            "2. Нажми на аватар (левый верхний угол)\n"
-            "3. ID под никнеймом\n\n"
-            "@userbotcbet | @cbet_controller_bot"
-        )
-        await send_plain(query.message, info_text,
-            InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="u_so2")]]))
-        return "SO2"
-
-    if data == "so2_reg":
-        SO2_AWAIT[tg_id] = "reg_id"
-        await send_plain(query.message,
-            "📝 Регистрация — Шаг 1/2\n"
-            "Введи свой Standoff 2 ID:\n"
-            "(Найти в профиле игры под никнеймом)",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
-        return "SO2"
-
-    if data == "so2_login":
-        context.user_data["so2_step"] = "login_nick"
-        context.user_data["so2_data"] = {}
-        await send_plain(query.message,
-            "🔑 Вход — Шаг 1/2\n\nВведи свой никнейм в Standoff 2:",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
-        return "SO2"
-
-    if data == "so2_edit":
-        SO2_AWAIT[tg_id] = "reg_id"
-        await send_plain(query.message,
-            "✏️ Изменение данных — Шаг 1/2\n"
-            "Введи новый Standoff 2 ID:",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
-        return "SO2"
-
-    if data == "so2_logout":
-        accs = load_so2_users()
-        if tg_id in accs:
-            del accs[tg_id]
-            save_so2_users(accs)
-        await send_plain(query.message,
-            "🚪 Ты вышел из аккаунта Standoff 2.",
-            so2_main_kb(False))
-        return "SO2"
-
-    if data == "so2_profile":
-        acc = get_so2_user(tg_id)
-        so2_id = acc.get("so2_id")
-        if not so2_id:
-            await query.answer("Сначала войди!", show_alert=True)
-            return "SO2"
-        if tg_id not in USER_BOTS:
-            await send_plain(query.message,
-                "⚠️ Юзербот не запущен. Нажми /start.",
-                InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
-            return "SO2"
-        await send_plain(query.message, "⏳ Загружаю профиль...", None)
-        result = await so2_fetch(tg_id, so2_id)
-        if result:
-            gold = acc.get("gold", "не указан")
-            await query.message.reply_text(
-                f"🎮 Мой профиль Standoff 2\n"
-                f"{result}\n"
-                f"💰 Мой баланс голды: {gold}\n"
-                f"📢 @userbotcbet",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
-        else:
-            await query.message.reply_text(
-                "❌ Не удалось получить данные. Попробуй позже.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
-        return "SO2"
-
-    # ── Standoff 2 ──
-    if data == "u_so2":
-        # Проверяем пароль
         context.user_data["so2_await_pass"] = True
-        await send_plain(query.message,
-            "🎮 Standoff 2\n\n"
-            "🔒 Введи пароль для доступа к разделу:",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]))
+        await send_plain(query.message, "🎮 Standoff 2\n\n🔒 Введи пароль для доступа к разделу:", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_modules_menu")]]))
         return "SO2"
 
     if data == "u_so2_enter":
@@ -1844,62 +1229,31 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             nick  = profile.get("nick", "—")
             so2id = profile.get("so2_id", "—")
             gold  = profile.get("gold", "не указан")
-            text = (
-                "🎮 Standoff 2\n\n"
-                f"👤 Ник: {nick}\n"
-                f"🆔 ID: {so2id}\n"
-                f"💰 Баланс Gold: {gold}\n\n"
-                "Выбери действие:"
-            )
+            text = f"🎮 Standoff 2\n\n👤 Ник: {nick}\n🆔 ID: {so2id}\n💰 Баланс Gold: {gold}\n\nВыбери действие:"
         else:
-            text = (
-                "🎮 Standoff 2\n\n"
-                "Ты ещё не зарегистрирован.\n"
-                "Зарегистрируйся чтобы сохранить профиль\n"
-                "и быстро смотреть статистику.\n\n"
-                "Или сразу ищи игрока по ID."
-            )
+            text = "🎮 Standoff 2\n\nТы ещё не зарегистрирован.\nЗарегистрируйся чтобы сохранить профиль\nи быстро смотреть статистику.\n\nИли сразу ищи игрока по ID."
         await send_plain(query.message, text, so2_main_kb(registered))
         return "SO2"
 
     if data == "so2_info":
-        await send_plain(query.message,
-            "Standoff 2 — модуль\n\n"
-            "Что умеет:\n"
-            "- Сохраняй профиль (ник, ID, баланс голды)\n"
-            "- Ищи игрока по SO2 ID\n"
-            "- Статистика: ранг, время, дата рег.\n\n"
-            "Как найти свой ID:\n"
-            "1. Открой Standoff 2\n"
-            "2. Нажми на аватар (верхний левый угол)\n"
-            "3. ID под никнеймом\n\n"
-            "@userbotcbet | @cbet_controller_bot",
-            InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="u_so2")]]))
+        await send_plain(query.message, "Standoff 2 — модуль\n\nЧто умеет:\n- Сохраняй профиль (ник, ID, баланс голды)\n- Ищи игрока по SO2 ID\n- Статистика: ранг, время, дата рег.\n\nКак найти свой ID:\n1. Открой Standoff 2\n2. Нажми на аватар (верхний левый угол)\n3. ID под никнеймом\n\n@userbotcbet | @cbet_controller_bot", InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="u_so2")]]))
         return "SO2"
 
     if data == "so2_register":
         context.user_data["so2_step"] = "nick"
         context.user_data["so2_data"] = {}
-        await send_plain(query.message,
-            "📝 Регистрация — Шаг 1/2\n\nВведи свой никнейм в Standoff 2:",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        await send_plain(query.message, "📝 Регистрация — Шаг 1/2\n\nВведи свой никнейм в Standoff 2:", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
         return "SO2"
 
     if data == "so2_edit":
         context.user_data["so2_step"] = "nick"
         context.user_data["so2_data"] = {}
-        await send_plain(query.message,
-            "✏️ Изменение данных — Шаг 1/3\n"
-            "Введи свой никнейм в Standoff 2:",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        await send_plain(query.message, "✏️ Изменение данных — Шаг 1/3\nВведи свой никнейм в Standoff 2:", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
         return "SO2"
 
     if data == "so2_search":
         context.user_data["so2_step"] = "search"
-        await send_plain(query.message,
-            "🔍 Поиск игрока\n"
-            "Введи Standoff 2 ID игрока:",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        await send_plain(query.message, "🔍 Поиск игрока\nВведи Standoff 2 ID игрока:", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
         return "SO2"
 
     if data == "so2_myprofile":
@@ -1909,9 +1263,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Сначала зарегистрируйся!", show_alert=True)
             return "SO2"
         if tg_id not in USER_BOTS:
-            await send_plain(query.message,
-                "⚠️ Юзербот не запущен. Нажми Обновить или /start.",
-                InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
+            await send_plain(query.message, "⚠️ Юзербот не запущен. Нажми Обновить или /start.", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]]))
             return "SO2"
         msg = await query.message.reply_text("⏳ Загружаю профиль...")
         result = await so2_fetch(tg_id, so2_id)
@@ -1919,18 +1271,10 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nick = profile.get("nick", "—")
         back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]])
         if result:
-            await msg.edit_text(
-                f"🎮 Мой профиль Standoff 2\n\n"
-                f"👤 Ник: {nick}\n"
-                f"🆔 ID: {so2_id}\n\n"
-                f"{result}",
-                reply_markup=back_kb)
+            await msg.edit_text(f"🎮 Мой профиль Standoff 2\n\n👤 Ник: {nick}\n🆔 ID: {so2_id}\n\n{result}", reply_markup=back_kb)
         else:
-            await msg.edit_text(
-                "❌ Не удалось получить данные. Попробуй позже.",
-                reply_markup=back_kb)
+            await msg.edit_text("❌ Не удалось получить данные. Попробуй позже.", reply_markup=back_kb)
 
-    # ── OSINT Органайзер ──
     if data == "u_osint":
         OSINT_SESSIONS[tg_id] = {"step": 0, "data": {}}
         step_text = _osint_step_text(0, {})
@@ -1951,11 +1295,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         step += 1
         if step >= len(OSINT_FIELDS):
             tree = _osint_build_tree(sess["data"])
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💾 Сохранить (скопируй)", callback_data="osint_done")],
-                [InlineKeyboardButton("🔄 Новое расследование", callback_data="u_osint")],
-                [InlineKeyboardButton("◀️ В меню", callback_data="back_main")],
-            ])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Новое расследование", callback_data="u_osint")],[InlineKeyboardButton("◀️ В меню", callback_data="back_main")]])
             await send_plain(query.message, tree, kb)
             del OSINT_SESSIONS[tg_id]
             return "MENU"
@@ -1969,20 +1309,11 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("✅ Скопируй текст выше!", show_alert=True)
         return "MENU"
 
-    # ── Парсер юзернеймов ──
     if data == "u_unparser":
         if tg_id not in UNPARSER_SESSIONS:
-            UNPARSER_SESSIONS[tg_id] = {
-                "cfg": {"length": 8, "digits": True, "count": 5, "mode": "random"},
-                "history": [], "current_idx": -1, "running": False,
-            }
+            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5, "mode": "random"}, "history": [], "current_idx": -1, "running": False}
         cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
-        await query.message.reply_text(
-            _unp_menu_text(cfg, tg_id),
-            reply_markup=_unp_menu_kb(cfg, tg_id),
-            disable_web_page_preview=True
-        )
-        return "UNPARSER"
+        await query.message.reply_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id), disable_web_page_preview=True)
         return "UNPARSER"
 
     if data == "unp_noop":
@@ -1993,40 +1324,13 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5, "mode": "random"}, "history": [], "current_idx": -1, "running": False}
         cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
         try:
-            await query.message.edit_text(
-                _unp_menu_text(cfg, tg_id),
-                reply_markup=_unp_menu_kb(cfg, tg_id),
-                disable_web_page_preview=True
-            )
+            await query.message.edit_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id), disable_web_page_preview=True)
         except Exception:
-            await query.message.reply_text(
-                _unp_menu_text(cfg, tg_id),
-                reply_markup=_unp_menu_kb(cfg, tg_id),
-                disable_web_page_preview=True
-            )
+            await query.message.reply_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id), disable_web_page_preview=True)
         return "UNPARSER"
 
     if data == "unp_info":
-        await send_plain(query.message,
-            "ℹ️ Парсер юзернеймов\n\n"
-            "Генерирует юзернеймы для Telegram.\n\n"
-            "🎲 Случайные — рандомные буквы и цифры нужной длины\n"
-            "✨ Красивые — осмысленные сочетания слов (dark neo, fire blade)\n\n"
-            "⚙️ Настройки:\n"
-            "📏 Длина — от 5 до 32 символов\n"
-            "🔢 Цифры — включить/выключить цифры\n"
-            "📦 Количество — от 1 до 20 штук\n\n"
-            "После генерации проверь доступность:\n"
-            "t.me/username — если открывается профиль — занят\n"
-            "Если не найден — свободен!\n\n"
-            "📢 @userbotcbet | 🤖 @cbet_controller_bot",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="unp_settings")]]))
-        return "UNPARSER"
-
-        if tg_id not in UNPARSER_SESSIONS:
-            UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5, "mode": "random"}, "history": [], "current_idx": -1, "running": False}
-        cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
-        await query.message.reply_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id))
+        await send_plain(query.message, "ℹ️ Парсер юзернеймов\n\nГенерирует юзернеймы для Telegram.\n\n🎲 Случайные — рандомные буквы и цифры нужной длины\n✨ Красивые — осмысленные сочетания слов (dark neo, fire blade)\n\n⚙️ Настройки:\n📏 Длина — от 5 до 32 символов\n🔢 Цифры — включить/выключить цифры\n📦 Количество — от 1 до 20 штук\n\nПосле генерации проверь доступность:\nt.me/username — если открывается профиль — занят\nЕсли не найден — свободен!\n\n📢 @userbotcbet | 🤖 @cbet_controller_bot", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="unp_settings")]]))
         return "UNPARSER"
 
     if data in ("unp_len_minus", "unp_len_plus", "unp_digits", "unp_count_minus", "unp_count_plus", "unp_mode_random", "unp_mode_pretty"):
@@ -2044,20 +1348,12 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("👑 Только для Pro подписки!", show_alert=True)
                 return "UNPARSER"
             cfg["mode"] = "pretty"
-        # Обновляем кнопки и текст
         try:
-            await query.message.edit_text(
-                _unp_menu_text(cfg, tg_id),
-                reply_markup=_unp_menu_kb(cfg, tg_id),
-                disable_web_page_preview=True
-            )
+            await query.message.edit_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id), disable_web_page_preview=True)
         except Exception:
-            await query.message.reply_text(
-                _unp_menu_text(cfg, tg_id),
-                reply_markup=_unp_menu_kb(cfg, tg_id),
-                disable_web_page_preview=True
-            )
+            await query.message.reply_text(_unp_menu_text(cfg, tg_id), reply_markup=_unp_menu_kb(cfg, tg_id), disable_web_page_preview=True)
         return "UNPARSER"
+
     if data == "unp_generate":
         if tg_id not in UNPARSER_SESSIONS:
             UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5, "mode": "random"}, "history": [], "current_idx": -1, "running": False}
@@ -2071,8 +1367,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sess["running"] = False
         sess["history"].append(batch)
         sess["current_idx"] = len(sess["history"]) - 1
-        text = _unp_format(batch, sess["current_idx"], len(sess["history"]))
-        await query.message.reply_text(text, reply_markup=_unp_result_kb(sess), disable_web_page_preview=True)
+        await query.message.reply_text(_unp_format(batch, sess["current_idx"], len(sess["history"])), reply_markup=_unp_result_kb(sess), disable_web_page_preview=True)
         return "UNPARSER"
 
     if data == "unp_next":
@@ -2110,27 +1405,12 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats     = get_mirror_stats(tg_id)
         has_mirror = tg_id in mirrors and mirrors[tg_id].get("active")
         token_hint = mirrors[tg_id].get("token", "")[:10] + "..." if has_mirror else "не подключён"
-
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                "🔴 Отключить зеркало" if has_mirror else "➕ Подключить свой бот",
-                callback_data="partner_toggle"
-            )],
+            [InlineKeyboardButton("🔴 Отключить зеркало" if has_mirror else "➕ Подключить свой бот", callback_data="partner_toggle")],
             [InlineKeyboardButton("📊 Статистика рефералов", callback_data="partner_stats")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]
+            [InlineKeyboardButton("◀️ Назад", callback_data="u_other")]
         ])
-        await send_plain(
-            query.message,
-            f"🪞 Партнёрская программа\n\n"
-            "Подключи своего бота — он станет зеркалом UserBot | Ru.\n"
-            "За каждого нового юзера который зарегистрируется через твой бот\n"
-            "ты получаешь +1 день к подписке.\n\n"
-            f"Статус: {'🟢 Активно' if has_mirror else '🔴 Не подключено'}\n"
-            f"Токен: {token_hint}\n"
-            f"Рефералов: {stats['total']}\n"
-            f"Бонусных дней заработано: {stats['bonus_days']}",
-            kb
-        )
+        await send_plain(query.message, f"🪞 Партнёрская программа\n\nПодключи своего бота — он станет зеркалом UserBot | Ru.\nЗа каждого нового юзера который зарегистрируется через твой бот\nты получаешь +1 день к подписке.\n\nСтатус: {'🟢 Активно' if has_mirror else '🔴 Не подключено'}\nТокен: {token_hint}\nРефералов: {stats['total']}\nБонусных дней заработано: {stats['bonus_days']}", kb)
         return "MENU"
 
     if data == "partner_stats":
@@ -2138,68 +1418,30 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         my_refs = [(uid, info) for uid, info in refs.items() if info.get("partner_id") == tg_id]
         users_all = load_json(USERS_FILE)
         lines = []
-        for uid, info in my_refs[-10:]:  # последние 10
+        for uid, info in my_refs[-10:]:
             nick = users_all.get(uid, {}).get("nick", uid)
             lines.append(f"  • {nick} — {info.get('date','?')}")
         total = len(my_refs)
-        txt = (
-            f"📊 Ваши рефералы\n\n"
-            f"Всего: {total}\n"
-            f"Бонусных дней: {total}\n\n"
-        )
-        if lines:
-            txt += "Последние 10:\n" + "\n".join(lines)
-        else:
-            txt += "Рефералов пока нет."
-        await send_plain(query.message, txt,
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
+        txt = f"📊 Ваши рефералы\n\nВсего: {total}\nБонусных дней: {total}\n\n"
+        txt += "Последние 10:\n" + "\n".join(lines) if lines else "Рефералов пока нет."
+        await send_plain(query.message, txt, InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
         return "MENU"
 
     if data == "partner_toggle":
         mirrors = load_mirrors()
         if tg_id in mirrors and mirrors[tg_id].get("active"):
-            # Отключаем
             await stop_mirror_bot(tg_id)
             mirrors[tg_id]["active"] = False
             save_mirrors(mirrors)
             await send_plain(query.message, "🔴 Зеркало отключено.", get_user_kb())
         else:
-            # Запрашиваем токен
-            await send_plain(query.message,
-                "➕ Подключение зеркала\n\n"
-                "1. Создай бота через @BotFather командой /newbot\n"
-                "2. Скопируй токен (выглядит как 123456789:AAF...)\n"
-                "3. Отправь токен сюда:",
-                InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
+            await send_plain(query.message, "➕ Подключение зеркала\n\n1. Создай бота через @BotFather командой /newbot\n2. Скопируй токен (выглядит как 123456789:AAF...)\n3. Отправь токен сюда:", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
             return "WAIT_MIRROR_TOKEN"
         return "MENU"
 
     if data == "u_info":
-        await send_plain(query.message,
-            "ℹ️ UserBot | Ru — Справка\n\n"
-            "🤖 Бот: @cbet_controller_bot\n"
-            "📢 Канал: @userbotcbet\n"
-            "👤 Автор: @cbet_cebep\n\n"
-            "── Что умеет бот ──\n"
-            "⚡️ Подключает твой аккаунт через Telethon\n"
-            "🧩 Модули: спамер, троллинг, roast и др.\n"
-            "🔧 Системные: автоответчик, ник по времени\n"
-            "🔍 Парсер юзернеймов\n"
-            "🪞 Партнёрка — свой зеркальный бот\n\n"
-            "── Подписки ──\n"
-            "🆓 Пробная — 5 дней бесплатно\n"
-            "⭐️ Базовая — 25 звёзд / 30 дней\n"
-            "👑 Про — 50 звёзд / 30 дней\n\n"
-            "── Если бот не отвечает ──\n"
-            "1. Нажми 🔄 Обновить\n"
-            "2. Напиши /start\n"
-            "3. Напиши @cbet_cebep\n\n"
-            "── Команды ──\n"
-            "/start — главное меню\n"
-            "/reset_me — сбросить сессию если что-то сломалось",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]))
+        await send_plain(query.message, "ℹ️ UserBot | Ru — Справка\n\n🤖 Бот: @cbet_controller_bot\n📢 Канал: @userbotcbet\n👤 Автор: @cbet_cebep\n\n── Что умеет бот ──\n⚡️ Подключает твой аккаунт через Telethon\n🧩 Модули: спамер, троллинг, roast и др.\n🔧 Системные: автоответчик, ник по времени\n🔍 Парсер юзернеймов\n🪞 Партнёрка — свой зеркальный бот\n\n── Подписки ──\n🆓 Пробная — 5 дней бесплатно\n⭐️ Базовая — 25 звёзд / 30 дней\n👑 Про — 50 звёзд / 30 дней\n\n── Если бот не отвечает ──\n1. Нажми 🔄 Обновить\n2. Напиши /start\n3. Напиши @cbet_cebep\n\n── Команды ──\n/start — главное меню\n/reset_me — сбросить сессию если что-то сломалось", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]))
         return "MENU"
-
 
     if data == "u_refresh":
         context.user_data.clear()
@@ -2210,13 +1452,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = "🟢 активен" if tg_id in USER_BOTS else "🔴 запускается..."
         if tg_id not in USER_BOTS and u_info.get("api_id") and u_info.get("api_hash"):
             asyncio.create_task(start_user_bot(tg_id, int(u_info["api_id"]), u_info["api_hash"]))
-        await send_photo(
-            query.message, PHOTO_MENU,
-            f"🔄 Обновлено!\n\n"
-            f"Добро пожаловать, {nick}!\n"
-            f"Юзербот: {status}",
-            get_user_kb()
-        )
+        await send_photo(query.message, PHOTO_MENU, f"🔄 Обновлено!\n\nДобро пожаловать, {nick}!\nЮзербот: {status}", get_user_kb())
         return "MENU"
 
     if data == "u_logout":
@@ -2237,12 +1473,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if os.path.exists(session_file):
             try: os.remove(session_file)
             except Exception: pass
-        await send_photo(
-            query.message, PHOTO_AUTH,
-            "❌ Сессия сброшена. Юзербот отключён.\n\n"
-            "Нажми кнопку чтобы войти снова:",
-            get_guest_kb()
-        )
+        await send_photo(query.message, PHOTO_AUTH, "❌ Сессия сброшена. Юзербот отключён.\n\nНажми кнопку чтобы войти снова:", get_guest_kb())
         return "MENU"
 
     if data == "u_profile":
@@ -2254,18 +1485,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sub_str = _sub_status_text(tg_id)
         plan    = get_plan(tg_id)
         limit   = plan["mod_slots"] if plan["mod_slots"] < 999 else "∞"
-        await send_plain(
-            query.message,
-            f"👤 Ваш профиль\n\n"
-            f"🆔 ID: {tg_id}\n"
-            f"🏷 Ник: {nick}\n"
-            f"📱 Телефон: {phone}\n"
-            f"⚡️ Движок: Telethon\n"
-            f"📊 Статус: {status}\n"
-            f"💎 Подписка: {sub_str}\n"
-            f"🧩 Модули: {len(mods)}/{limit}",
-            get_cancel_kb()
-        )
+        await send_plain(query.message, f"👤 Ваш профиль\n\n🆔 ID: {tg_id}\n🏷 Ник: {nick}\n📱 Телефон: {phone}\n⚡️ Движок: Telethon\n📊 Статус: {status}\n💎 Подписка: {sub_str}\n🧩 Модули: {len(mods)}/{limit}", get_cancel_kb())
         return "MENU"
 
     if data == "u_sub":
@@ -2273,10 +1493,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MENU"
 
     if data == "u_entercode":
-        await send_plain(query.message,
-            "🎟 Введи код подписки:\n\n"
-            "Коды выдаются администратором или приобретаются на канале @userbotcbet",
-            get_cancel_kb())
+        await send_plain(query.message, "🎟 Введи код подписки:\n\nКоды выдаются администратором или приобретаются на канале @userbotcbet", get_cancel_kb())
         return "WAIT_PROMO_ACTIVATE"
 
     if data == "sub_buy_trial":
@@ -2292,74 +1509,36 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sub["chosen_sys"]  = []
         sub["chosen_mods"] = []
         save_sub(tg_id, sub)
-        await send_plain(query.message,
-            "🆓 Пробная подписка активирована на 5 дней!\n\n"
-            "Выбери 1 системный модуль который хочешь использовать:",
-            InlineKeyboardMarkup([
-                [InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_trial")],
-                [InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")],
-            ])
-        )
+        await send_plain(query.message, "🆓 Пробная подписка активирована на 5 дней!\n\nВыбери 1 системный модуль который хочешь использовать:", InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_trial")],[InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")]]))
         return "MENU"
 
     if data == "sub_buy_basic":
         from telegram import LabeledPrice
-        await context.bot.send_invoice(
-            chat_id=query.message.chat_id,
-            title="Базовая подписка — UserBot | Ru",
-            description="30 дней. 3 модуля из магазина, 2 системных на выбор.",
-            payload=f"sub_basic_{tg_id}",
-            provider_token="",
-            currency="XTR",
-            prices=[LabeledPrice("Базовая подписка", 25)],
-        )
+        await context.bot.send_invoice(chat_id=query.message.chat_id, title="Базовая подписка — UserBot | Ru", description="30 дней. 3 модуля из магазина, 2 системных на выбор.", payload=f"sub_basic_{tg_id}", provider_token="", currency="XTR", prices=[LabeledPrice("Базовая подписка", 25)])
         return "MENU"
 
     if data == "sub_buy_pro":
         from telegram import LabeledPrice
-        await context.bot.send_invoice(
-            chat_id=query.message.chat_id,
-            title="Про подписка — UserBot | Ru",
-            description="30 дней. Все модули из магазина и все системные модули.",
-            payload=f"sub_pro_{tg_id}",
-            provider_token="",
-            currency="XTR",
-            prices=[LabeledPrice("Про подписка", 50)],
-        )
+        await context.bot.send_invoice(chat_id=query.message.chat_id, title="Про подписка — UserBot | Ru", description="30 дней. Все модули из магазина и все системные модули.", payload=f"sub_pro_{tg_id}", provider_token="", currency="XTR", prices=[LabeledPrice("Про подписка", 50)])
         return "MENU"
 
     if data.startswith("sub_choose_sys_"):
-        # sub_choose_sys_autoreply_trial / sub_choose_sys_timenick_basic
-        parts   = data[len("sub_choose_sys_"):].rsplit("_", 1)
-        mod     = parts[0]
+        parts    = data[len("sub_choose_sys_"):].rsplit("_", 1)
+        mod      = parts[0]
         plan_key = parts[1] if len(parts) > 1 else "trial"
-        plan    = SUB_PLANS.get(plan_key, SUB_PLANS["trial"])
-        sub     = load_sub(tg_id)
-        chosen  = sub.get("chosen_sys", [])
+        plan     = SUB_PLANS.get(plan_key, SUB_PLANS["trial"])
+        sub      = load_sub(tg_id)
+        chosen   = sub.get("chosen_sys", [])
         if mod not in chosen:
             chosen.append(mod)
-        # Ограничиваем по слотам
         chosen = chosen[:plan["sys_slots"]]
         sub["chosen_sys"] = chosen
         save_sub(tg_id, sub)
-        await send_plain(query.message,
-            "✅ Системный модуль активирован!\n\n"
-            "Теперь иди в 🔧 Системные модули.",
-            get_user_kb())
+        await send_plain(query.message, "✅ Системный модуль активирован!\n\nТеперь иди в 🔧 Системные модули.", get_user_kb())
         return "MENU"
 
     if data == "u_sonya":
-        await send_photo(
-            query.message, PHOTO_SONYA_SAD,
-            "🤖 Соня — ИИ-ассистент\n\n"
-            "Соня — персональный ИИ-помощник внутри юзербота.\n\n"
-            "Она умеет отвечать на вопросы, помогать с настройкой модулей "
-            "и поддержать разговор в любое время суток.\n\n"
-            "😴 Сейчас Соня отдыхает...\n"
-            "Функция ИИ-чата скоро будет доступна!\n\n"
-            "📢 Канал: @userbotcbet",
-            get_cancel_kb()
-        )
+        await send_photo(query.message, PHOTO_SONYA_SAD, "🤖 Соня — ИИ-ассистент\n\nСоня — персональный ИИ-помощник внутри юзербота.\n\nОна умеет отвечать на вопросы, помогать с настройкой модулей и поддержать разговор в любое время суток.\n\n😴 Сейчас Соня отдыхает...\nФункция ИИ-чата скоро будет доступна!\n\n📢 Канал: @userbotcbet", get_cancel_kb())
         return "SONYA_CHAT"
 
     if data == "u_modules":
@@ -2373,63 +1552,37 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 src = m.get("source", "custom")
                 badge = "👤" if src == "custom" or src is None else "🛒"
                 return f"  {badge} {m['name']}.py — {m.get('date','?')}"
-            mods_text = "\n".join(_mod_label(m) for m in mods_list)
-            mods_text += "\n\n👤 — свой модуль   🛒 — из магазина"
+            mods_text = "\n".join(_mod_label(m) for m in mods_list) + "\n\n👤 — свой модуль   🛒 — из магазина"
         else:
             mods_text = "  модули не установлены"
-
-        # Строим клавиатуру: кнопка удаления для каждого модуля
         kb_rows = []
         for m in mods_list:
             src = m.get("source", "custom")
             badge = "👤" if src == "custom" or src is None else "🛒"
-            kb_rows.append([
-                InlineKeyboardButton(f"🗑 {badge} {m['name']}.py", callback_data=f"mod_delete_{m['name']}")
-            ])
+            kb_rows.append([InlineKeyboardButton(f"🗑 {badge} {m['name']}.py", callback_data=f"mod_delete_{m['name']}")])
         kb_rows.append([InlineKeyboardButton("🛒 Магазин модулей", callback_data="mod_shop")])
         kb_rows.append([InlineKeyboardButton("➕ Установить своё .py", callback_data="mod_install")])
-        kb_rows.append([InlineKeyboardButton("◀️ Назад", callback_data="back_main")])
-        kb = InlineKeyboardMarkup(kb_rows)
-
-        await send_photo(
-            query.message, PHOTO_MODULES,
-            f"🧩 Модули — UserBot | Ru\n\n"
-            f"Здесь ты управляешь плагинами своего юзербота.\n"
-            f"Модули загружаются прямо в Telethon-сессию.\n\n"
-            f"Слотов занято: {used}/5\n\n"
-            f"Установленные модули:\n{mods_text}\n\n"
-            f"Нажми на модуль чтобы удалить его.",
-            kb
-        )
+        kb_rows.append([InlineKeyboardButton("◀️ Назад", callback_data="u_modules_menu")])
+        await send_photo(query.message, PHOTO_MODULES, f"🧩 Модули — UserBot | Ru\n\nЗдесь ты управляешь плагинами своего юзербота.\nМодули загружаются прямо в Telethon-сессию.\n\nСлотов занято: {used}/5\n\nУстановленные модули:\n{mods_text}\n\nНажми на модуль чтобы удалить его.", InlineKeyboardMarkup(kb_rows))
         return "MENU"
 
-    # ── Удаление модуля ──
     if data.startswith("mod_delete_"):
         mod_name = data[len("mod_delete_"):]
         m_file = os.path.join(DATA_DIR, f"user_modules_{tg_id}.json")
-
         async with _file_lock:
             m_data = load_json(m_file)
             before = len(m_data.get("modules", []))
             m_data["modules"] = [m for m in m_data.get("modules", []) if m["name"] != mod_name]
             after = len(m_data["modules"])
             save_json(m_file, m_data)
-
-        # Удаляем .py файл с диска
         mod_path = os.path.join(MODULES_DIR, f"user_{tg_id}", f"{mod_name}.py")
         if os.path.exists(mod_path):
-            try:
-                os.remove(mod_path)
-            except Exception as e:
-                logger.error(f"Ошибка удаления файла модуля {mod_path}: {e}")
-
-        # Убираем из кэша загруженных модулей
+            try: os.remove(mod_path)
+            except Exception as e: logger.error(f"Ошибка удаления {mod_path}: {e}")
         if tg_id in LOADED_MODULES and mod_name in LOADED_MODULES[tg_id]:
             LOADED_MODULES[tg_id].remove(mod_name)
-
         if before != after:
             await send_plain(query.message, f"🗑 Модуль {mod_name}.py удалён.", None)
-            # Перезапускаем юзербота если онлайн
             if tg_id in USER_BOTS:
                 async with _file_lock:
                     users_reload = load_json(USERS_FILE)
@@ -2438,44 +1591,21 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await start_user_bot(tg_id, int(u_info["api_id"]), u_info["api_hash"])
         else:
             await send_plain(query.message, f"⚠️ Модуль {mod_name} не найден.", None)
-
-        # Показываем обновлённый список модулей
         async with _file_lock:
             m_data = load_json(m_file)
         used      = len(m_data.get("modules", []))
         mods_list = m_data.get("modules", [])
-        if mods_list:
-            mods_text = "\n".join(
-                f"  {'👤' if m.get('source','custom') in ('custom', None) else '🛒'} {m['name']}.py — {m.get('date','?')}" 
-                for m in mods_list
-            ) + "\n\n👤 — свой   🛒 — магазин"
-        else:
-            mods_text = "  модули не установлены"
-        kb_rows = []
-        for m in mods_list:
-            kb_rows.append([InlineKeyboardButton(f"🗑 {m['name']}.py", callback_data=f"mod_delete_{m['name']}")])
+        mods_text = "\n".join(f"  {'👤' if m.get('source','custom') in ('custom', None) else '🛒'} {m['name']}.py — {m.get('date','?')}" for m in mods_list) + "\n\n👤 — свой   🛒 — магазин" if mods_list else "  модули не установлены"
+        kb_rows = [[InlineKeyboardButton(f"🗑 {m['name']}.py", callback_data=f"mod_delete_{m['name']}")] for m in mods_list]
         kb_rows.append([InlineKeyboardButton("➕ Установить модуль", callback_data="mod_install")])
-        kb_rows.append([InlineKeyboardButton("◀️ Назад", callback_data="back_main")])
-        await send_photo(
-            query.message, PHOTO_MODULES,
-            f"🧩 Модули — UserBot | Ru\n\n"
-            f"Слотов занято: {used}/5\n\n"
-            f"Установленные модули:\n{mods_text}\n\n"
-            f"Нажми на модуль чтобы удалить его.",
-            InlineKeyboardMarkup(kb_rows)
-        )
+        kb_rows.append([InlineKeyboardButton("◀️ Назад", callback_data="u_modules_menu")])
+        await send_photo(query.message, PHOTO_MODULES, f"🧩 Модули — UserBot | Ru\n\nСлотов занято: {used}/5\n\nУстановленные модули:\n{mods_text}\n\nНажми на модуль чтобы удалить его.", InlineKeyboardMarkup(kb_rows))
         return "MENU"
 
     if data == "mod_install":
-        await send_plain(
-            query.message,
-            "🔗 Отправьте прямую ссылку на .py плагин\n"
-            "или прикрепите файл документом:",
-            get_cancel_kb()
-        )
+        await send_plain(query.message, "🔗 Отправьте прямую ссылку на .py плагин\nили прикрепите файл документом:", get_cancel_kb())
         return "MODULE_INSTALL"
 
-    # ── Системные модули — главное меню ──
     if data == "u_sysmods":
         await _show_sysmods(query.message, tg_id, "main")
         return "MENU"
@@ -2488,7 +1618,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _show_sysmods(query.message, tg_id, "timenick")
         return "MENU"
 
-    # ── Автоответчик ──
     if data == "sysmod_autoreply_toggle":
         cfg = _load_autoreply_cfg(tg_id)
         cfg["enabled"] = not cfg.get("enabled", False)
@@ -2510,13 +1639,11 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _show_sysmods(query.message, tg_id, "autoreply")
         return "MENU"
 
-    # ── Ник по времени ──
     if data == "sysmod_timenick_toggle":
         cfg     = _load_timenick_cfg(tg_id)
         enabled = not cfg.get("enabled", False)
         cfg["enabled"] = enabled
         _save_timenick_cfg(tg_id, cfg)
-        # Запускаем или останавливаем цикл
         client = USER_BOTS.get(tg_id)
         if client:
             if enabled and cfg.get("nickname"):
@@ -2527,40 +1654,25 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MENU"
 
     if data == "sysmod_timenick_setnick":
-        await send_plain(query.message,
-            "✏️ Введи никнейм (без времени):\n"
-            "Пример: cbet_cebep\n\n"
-            "Бот сам добавит | HH:MM",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]]))
+        await send_plain(query.message, "✏️ Введи никнейм (без времени):\nПример: cbet_cebep\n\nБот сам добавит | HH:MM", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]]))
         context.user_data["await_timenick"] = "nick"
         return "WAIT_TIMENICK"
 
     if data == "sysmod_timenick_setsec":
-        await send_plain(query.message,
-            "⏱ Введи секунду обновления (0-59):\n\n"
-            "Например: 0 — обновление в начале каждой минуты\n"
-            "30 — обновление на 30-й секунде каждой минуты",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]]))
+        await send_plain(query.message, "⏱ Введи секунду обновления (0-59):\n\nНапример: 0 — обновление в начале каждой минуты\n30 — обновление на 30-й секунде каждой минуты", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]]))
         context.user_data["await_timenick"] = "second"
         return "WAIT_TIMENICK"
 
     if data == "sysmod_timenick_settz":
         cfg = _load_timenick_cfg(tg_id)
         cur = cfg.get("tz_offset", 3)
-        # Быстрые кнопки для популярных зон
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("UTC+2", callback_data="sysmod_tz_2"),
-             InlineKeyboardButton("UTC+3 (МСК)", callback_data="sysmod_tz_3"),
-             InlineKeyboardButton("UTC+4", callback_data="sysmod_tz_4")],
-            [InlineKeyboardButton("UTC+5", callback_data="sysmod_tz_5"),
-             InlineKeyboardButton("UTC+6", callback_data="sysmod_tz_6"),
-             InlineKeyboardButton("UTC+7", callback_data="sysmod_tz_7")],
+            [InlineKeyboardButton("UTC+2", callback_data="sysmod_tz_2"), InlineKeyboardButton("UTC+3 (МСК)", callback_data="sysmod_tz_3"), InlineKeyboardButton("UTC+4", callback_data="sysmod_tz_4")],
+            [InlineKeyboardButton("UTC+5", callback_data="sysmod_tz_5"), InlineKeyboardButton("UTC+6", callback_data="sysmod_tz_6"), InlineKeyboardButton("UTC+7", callback_data="sysmod_tz_7")],
             [InlineKeyboardButton("✏️ Ввести вручную", callback_data="sysmod_timenick_settz_manual")],
             [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]
         ])
-        await send_plain(query.message,
-            f"🌍 Выбери часовой пояс\n\nСейчас: UTC+{cur}",
-            kb)
+        await send_plain(query.message, f"🌍 Выбери часовой пояс\n\nСейчас: UTC+{cur}", kb)
         return "MENU"
 
     if data.startswith("sysmod_tz_"):
@@ -2576,33 +1688,23 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MENU"
 
     if data == "sysmod_timenick_settz_manual":
-        await send_plain(query.message,
-            "🌍 Введи смещение от UTC (целое число):\n\n"
-            "Примеры: 3 (Москва), 5 (Екб), -5 (США EST)",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]]))
+        await send_plain(query.message, "🌍 Введи смещение от UTC (целое число):\n\nПримеры: 3 (Москва), 5 (Екб), -5 (США EST)", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_timenick")]]))
         context.user_data["await_timenick"] = "tz"
         return "WAIT_TIMENICK"
 
-    # ── Магазин стоковых модулей ──
     if data == "mod_shop":
-        # Читаем список доступных стоковых модулей
         stock = []
         if os.path.exists(STOCK_MODULES_DIR):
             for fname in sorted(os.listdir(STOCK_MODULES_DIR)):
                 if fname.endswith(".py"):
                     stock.append(fname[:-3])
-
         if not stock:
             await send_plain(query.message, "🛒 Магазин пока пуст. Скоро появятся модули!", get_cancel_kb())
             return "MENU"
-
-        # Читаем уже установленные модули юзера
         m_file = os.path.join(DATA_DIR, f"user_modules_{tg_id}.json")
         async with _file_lock:
             m_data = load_json(m_file)
         installed = {m["name"] for m in m_data.get("modules", [])}
-
-        # Строим клавиатуру магазина
         kb_rows = []
         lines = []
         for mod in stock:
@@ -2613,27 +1715,15 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 kb_rows.append([InlineKeyboardButton(f"📥 {mod}", callback_data=f"mod_get_{mod}")])
                 lines.append(f"  📥 {mod}.py")
         kb_rows.append([InlineKeyboardButton("◀️ Назад", callback_data="u_modules")])
-
-        await send_photo(
-            query.message, PHOTO_MODULES,
-            f"🛒 Магазин модулей\n\n"
-            f"Выбери модуль для установки:\n\n"
-            + "\n".join(lines) +
-            f"\n\nНажми на модуль чтобы установить.",
-            InlineKeyboardMarkup(kb_rows)
-        )
+        await send_photo(query.message, PHOTO_MODULES, "🛒 Магазин модулей\n\nВыбери модуль для установки:\n\n" + "\n".join(lines) + "\n\nНажми на модуль чтобы установить.", InlineKeyboardMarkup(kb_rows))
         return "MENU"
 
-    # ── Установка стокового модуля ──
     if data.startswith("mod_get_"):
         mod_name = data[len("mod_get_"):]
         src_path = os.path.join(STOCK_MODULES_DIR, f"{mod_name}.py")
-
         if not os.path.exists(src_path):
             await send_plain(query.message, f"❌ Модуль {mod_name} не найден в магазине.", get_cancel_kb())
             return "MENU"
-
-        # Проверяем лимит по подписке
         m_file = os.path.join(DATA_DIR, f"user_modules_{tg_id}.json")
         async with _file_lock:
             m_data = load_json(m_file)
@@ -2641,38 +1731,20 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         plan    = get_plan(tg_id)
         limit   = plan["mod_slots"]
         if current >= limit:
-            await send_plain(query.message,
-                f"⚠️ Достигнут лимит модулей ({current}/{limit}) для твоей подписки.\n"
-
-                f"Улучши подписку в разделе 💎 Подписка.",
-                get_user_kb())
+            await send_plain(query.message, f"⚠️ Достигнут лимит модулей ({current}/{limit}) для твоей подписки.\nУлучши подписку в разделе 💎 Подписка.", get_user_kb())
             return "MENU"
-
-        # Копируем файл в папку юзера
         import shutil
         user_dir = os.path.join(MODULES_DIR, f"user_{tg_id}")
         os.makedirs(user_dir, exist_ok=True)
-        dst_path = os.path.join(user_dir, f"{mod_name}.py")
-        shutil.copy2(src_path, dst_path)
-
-        # Копируем menu.json модуля если есть
+        shutil.copy2(src_path, os.path.join(user_dir, f"{mod_name}.py"))
         menu_src = os.path.join(STOCK_MODULES_DIR, f"{mod_name}_menu.json")
         if os.path.exists(menu_src):
             shutil.copy2(menu_src, os.path.join(user_dir, f"{mod_name}_menu.json"))
-
-        # Обновляем реестр
         async with _file_lock:
             m_data.setdefault("modules", [])
-            # Не дублируем если уже есть
             if not any(m["name"] == mod_name for m in m_data["modules"]):
-                m_data["modules"].append({
-                    "name": mod_name,
-                    "date": datetime.now().strftime("%d.%m.%Y"),
-                    "source": "shop"
-                })
+                m_data["modules"].append({"name": mod_name, "date": datetime.now().strftime("%d.%m.%Y"), "source": "shop"})
             save_json(m_file, m_data)
-
-        # Перезапускаем юзербота если онлайн
         if tg_id in USER_BOTS:
             async with _file_lock:
                 users_reload = load_json(USERS_FILE)
@@ -2682,8 +1754,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_plain(query.message, f"✅ Модуль {mod_name}.py установлен и загружен в юзербот!", None)
         else:
             await send_plain(query.message, f"✅ Модуль {mod_name}.py установлен. Запустите юзербота для активации.", None)
-
-        # Возвращаемся в магазин
         stock = [f[:-3] for f in sorted(os.listdir(STOCK_MODULES_DIR)) if f.endswith(".py")]
         async with _file_lock:
             m_data = load_json(m_file)
@@ -2698,62 +1768,21 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 kb_rows.append([InlineKeyboardButton(f"📥 {mod}", callback_data=f"mod_get_{mod}")])
                 lines.append(f"  📥 {mod}.py")
         kb_rows.append([InlineKeyboardButton("◀️ Назад", callback_data="u_modules")])
-        await send_photo(
-            query.message, PHOTO_MODULES,
-            f"🛒 Магазин модулей\n\n" + "\n".join(lines) + "\n\nНажми на модуль чтобы установить.",
-            InlineKeyboardMarkup(kb_rows)
-        )
+        await send_photo(query.message, PHOTO_MODULES, "🛒 Магазин модулей\n\n" + "\n".join(lines) + "\n\nНажми на модуль чтобы установить.", InlineKeyboardMarkup(kb_rows))
         return "MENU"
-
-    # ══════════════════════════════════════════════════════════════
-    # 🔒 SCREENLOCK — тестовый модуль, пароль: uretra2026
-    # ══════════════════════════════════════════════════════════════
 
     if data == "u_screenlock":
         context.user_data["sl_step"] = "wait_password"
-        await send_plain(
-            query.message,
-            "🔒 ScreenLock\n\n"
-            "⚠️ Тестовый модуль\n\n"
-            "Введи пароль для доступа:",
-            InlineKeyboardMarkup([
-                [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
-            ])
-        )
+        await send_plain(query.message, "🔒 ScreenLock\n\n⚠️ Тестовый модуль\n\nВведи пароль для доступа:", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_modules_menu")]]))
         return "SCREENLOCK"
 
     if data == "sl_menu":
-        await send_plain(
-            query.message,
-            "🔒 ScreenLock\n\n"
-            "Создай агента для удалённого управления ПК компании.\n\n"
-            "Как работает:\n"
-            "1. Вводишь токен Telegram-бота\n"
-            "2. Выбираешь формат\n"
-            "3. Получаешь архив с программой\n"
-            "4. Запускаешь на нужном ПК\n"
-            "5. Управляешь через того бота\n\n"
-            "1 токен = 1 ПК\n\n"
-            "📢 @userbotcbet",
-            InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Создать агента", callback_data="sl_create")],
-                [InlineKeyboardButton("◀️ Назад",          callback_data="back_main")],
-            ])
-        )
+        await send_plain(query.message, "🔒 ScreenLock\n\nСоздай агента для удалённого управления ПК компании.\n\nКак работает:\n1. Вводишь токен Telegram-бота\n2. Выбираешь формат\n3. Получаешь архив с программой\n4. Запускаешь на нужном ПК\n5. Управляешь через того бота\n\n1 токен = 1 ПК\n\n📢 @userbotcbet", InlineKeyboardMarkup([[InlineKeyboardButton("➕ Создать агента", callback_data="sl_create")],[InlineKeyboardButton("◀️ Назад", callback_data="u_modules_menu")]]))
         return "SCREENLOCK"
 
     if data == "sl_create":
         context.user_data["sl_step"] = "wait_token"
-        await send_plain(
-            query.message,
-            "🔒 ScreenLock — Создание агента\n\n"
-            "Шаг 1/2: Введи токен бота\n\n"
-            "Получить токен: @BotFather → /newbot\n"
-            "Формат: 1234567890:AAFxxxxxxxxxxxxxxxxxxxxxxx",
-            InlineKeyboardMarkup([
-                [InlineKeyboardButton("◀️ Отмена", callback_data="sl_menu")],
-            ])
-        )
+        await send_plain(query.message, "🔒 ScreenLock — Создание агента\n\nШаг 1/2: Введи токен бота\n\nПолучить токен: @BotFather → /newbot\nФормат: 1234567890:AAFxxxxxxxxxxxxxxxxxxxxxxx", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="sl_menu")]]))
         return "SCREENLOCK"
 
     if data == "sl_format_exe":
@@ -2770,26 +1799,12 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             zip_buf = io.BytesIO()
             with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr("ScreenLock_agent/bot.py",          pc_code)
-                zf.writestr("ScreenLock_agent/requirements.txt",
-                    "python-telegram-bot==20.7\npsutil\npyautogui\nPillow\n")
+                zf.writestr("ScreenLock_agent/requirements.txt", "python-telegram-bot==20.7\npsutil\npyautogui\nPillow\n")
                 zf.writestr("ScreenLock_agent/README.txt",       readme)
-                zf.writestr("ScreenLock_agent/start.bat",
-                    "@echo off\npip install -r requirements.txt\npython bot.py\npause\n")
+                zf.writestr("ScreenLock_agent/start.bat",        "@echo off\npip install -r requirements.txt\npython bot.py\npause\n")
             zip_buf.seek(0)
             await msg.delete()
-            await query.message.reply_document(
-                document=zip_buf,
-                filename="ScreenLock_agent.zip",
-                caption=(
-                    "✅ ScreenLock агент готов!\n\n"
-                    "📋 Инструкция внутри архива (README.txt)\n\n"
-                    "Быстрый старт:\n"
-                    "1. Распакуй архив на ПК\n"
-                    "2. Запусти start.bat\n"
-                    "3. Открой бота в Telegram → /start\n\n"
-                    "🔒 @userbotcbet"
-                )
-            )
+            await query.message.reply_document(document=zip_buf, filename="ScreenLock_agent.zip", caption="✅ ScreenLock агент готов!\n\n📋 Инструкция внутри архива (README.txt)\n\nБыстрый старт:\n1. Распакуй архив на ПК\n2. Запусти start.bat\n3. Открой бота в Telegram → /start\n\n🔒 @userbotcbet")
         except Exception as e:
             await msg.edit_text(f"❌ Ошибка: {e}")
         return "SCREENLOCK"
@@ -2801,43 +1816,29 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return "MENU"
 
 
-# ─── LOGIN_PHONE_EXISTING ──────────────────────────────────────────
-
 async def login_phone_existing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = update.message.text.strip()
-
     if not phone.startswith("+") or not phone[1:].isdigit():
         await send_plain(update.message, "⚠️ Неверный формат. Пример: +79001234567\n\nПовторите ввод:", get_cancel_kb())
         return "LOGIN_PHONE_EXISTING"
-
     async with _file_lock:
         users = load_json(USERS_FILE)
-
     found_id, found_user = None, None
     for uid, udata in users.items():
         if udata.get("phone") == phone:
             found_id, found_user = uid, udata
             break
-
     if not found_id:
-        await send_photo(
-            update.message, PHOTO_AUTH,
-            f"❌ Номер {phone} не найден в системе.\n\n"
-            "Если ты новый пользователь — используй Регистрацию.",
-            get_guest_kb()
-        )
+        await send_photo(update.message, PHOTO_AUTH, f"❌ Номер {phone} не найден в системе.\n\nЕсли ты новый пользователь — используй Регистрацию.", get_guest_kb())
         return "MENU"
-
     if not found_user.get("api_id") or not found_user.get("api_hash"):
         await send_photo(update.message, PHOTO_AUTH, "⚠️ Данные аккаунта повреждены. Необходима повторная регистрация.", get_guest_kb())
         return "MENU"
-
-    context.user_data["phone"]              = phone
-    context.user_data["api_id"]             = int(found_user["api_id"])
-    context.user_data["api_hash"]           = found_user["api_hash"]
-    context.user_data["reg_nick"]           = found_user.get("nick", f"User_{found_id[:4]}")
-    context.user_data["login_existing_id"]  = found_id
-
+    context.user_data["phone"]             = phone
+    context.user_data["api_id"]            = int(found_user["api_id"])
+    context.user_data["api_hash"]          = found_user["api_hash"]
+    context.user_data["reg_nick"]          = found_user.get("nick", f"User_{found_id[:4]}")
+    context.user_data["login_existing_id"] = found_id
     session_file = os.path.join(DATA_DIR, f"session_{found_id}.session")
     if os.path.exists(session_file):
         await send_plain(update.message, "⏳ Восстанавливаем сессию...", None)
@@ -2849,42 +1850,26 @@ async def login_phone_existing(update: Update, context: ContextTypes.DEFAULT_TYP
                     users_w[found_id]["authenticated"] = True
                     save_json(USERS_FILE, users_w)
                 nick = found_user.get("nick", "Пользователь")
-                await send_photo(
-                    update.message, PHOTO_MENU,
-                    f"🎉 Добро пожаловать обратно, {nick}!\n\n"
-                    "Юзербот восстановлен и активен.\n\n"
-                    "Выбери раздел:",
-                    get_user_kb()
-                )
+                await send_photo(update.message, PHOTO_MENU, f"🎉 Добро пожаловать обратно, {nick}!\n\nЮзербот восстановлен и активен.\n\nВыбери раздел:", get_user_kb())
                 return "MENU"
         except Exception as e:
             logger.warning(f"Не удалось восстановить сессию {found_id}: {e}")
-
     await send_plain(update.message, "⏳ Сессия истекла, запрашиваем новый код...", None)
     session_path = os.path.join(DATA_DIR, f"session_{found_id}")
     client = TelegramClient(session_path, int(found_user["api_id"]), found_user["api_hash"])
-
     try:
         await client.connect()
         sent_code = await client.send_code_request(phone, force_sms=True)
         context.user_data["client"]          = client
         context.user_data["phone_code_hash"] = sent_code.phone_code_hash
         context.user_data["pin_entered"]     = ""
-        await send_photo(
-            update.message, PHOTO_AUTH,
-            "📩 Код отправлен!\n\n"
-            "Telegram прислал код в приложение.\n"
-            "Введи его через пин-пад ниже 👇",
-            get_pinpad_kb("")
-        )
+        await send_photo(update.message, PHOTO_AUTH, "📩 Код отправлен!\n\nTelegram прислал код в приложение.\nВведи его через пин-пад ниже 👇", get_pinpad_kb(""))
         return "WAIT_CODE"
     except Exception as e:
         logger.error(f"Ошибка при повторном входе {found_id}: {e}")
         await send_photo(update.message, PHOTO_AUTH, f"❌ Ошибка: {e}\n\nПопробуй снова — /start", get_guest_kb())
         return "MENU"
 
-
-# ─── REG_NICK ─────────────────────────────────────────────────────
 
 async def reg_nick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nick = update.message.text.strip()
@@ -2895,19 +1880,9 @@ async def reg_nick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_plain(update.message, f"⚠️ Никнейм {nick} уже занят. Введите другой:", get_cancel_kb())
         return "REG_NICK"
     context.user_data["reg_nick"] = nick
-    await send_photo(
-        update.message, PHOTO_AUTH,
-        "📱 Авторизация — Шаг 2 из 4\n\n"
-        "Введи номер телефона привязанный к твоему Telegram-аккаунту.\n\n"
-        "На него придёт код подтверждения от Telegram.\n"
-        "Формат: +79001234567 или +380XXXXXXXXX\n\n"
-        "Мы не используем номер для рассылок.",
-        get_cancel_kb()
-    )
+    await send_photo(update.message, PHOTO_AUTH, "📱 Авторизация — Шаг 2 из 4\n\nВведи номер телефона привязанный к твоему Telegram-аккаунту.\n\nНа него придёт код подтверждения от Telegram.\nФормат: +79001234567 или +380XXXXXXXXX\n\nМы не используем номер для рассылок.", get_cancel_kb())
     return "LOGIN_PHONE"
 
-
-# ─── LOGIN_PHONE ───────────────────────────────────────────────────
 
 async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = update.message.text.strip()
@@ -2918,31 +1893,12 @@ async def login_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users = load_json(USERS_FILE)
     taken = any(v.get("phone", "") == phone and v.get("authenticated", False) for v in users.values())
     if taken:
-        await send_plain(
-            update.message,
-            f"⚠️ Номер {phone} уже зарегистрирован в системе.\n\n"
-            "Если это ваш номер — используй кнопку Войти.",
-            get_cancel_kb()
-        )
+        await send_plain(update.message, f"⚠️ Номер {phone} уже зарегистрирован в системе.\n\nЕсли это ваш номер — используй кнопку Войти.", get_cancel_kb())
         return "LOGIN_PHONE"
     context.user_data["phone"] = phone
-    await send_photo(
-        update.message, PHOTO_AUTH,
-        "🔑 Авторизация — Шаг 3 из 4\n\n"
-        "Введи свой API ID — числовой идентификатор приложения Telegram.\n\n"
-        "Как получить:\n"
-        "1. Зайди на my.telegram.org\n"
-        "2. Войди в свой аккаунт\n"
-        "3. Раздел API development tools\n"
-        "4. Скопируй поле api_id\n\n"
-        "Выглядит как число: 12345678\n\n"
-        "Помощь: @userbotcbet",
-        get_cancel_kb()
-    )
+    await send_photo(update.message, PHOTO_AUTH, "🔑 Авторизация — Шаг 3 из 4\n\nВведи свой API ID — числовой идентификатор приложения Telegram.\n\nКак получить:\n1. Зайди на my.telegram.org\n2. Войди в свой аккаунт\n3. Раздел API development tools\n4. Скопируй поле api_id\n\nВыглядит как число: 12345678\n\nПомощь: @userbotcbet", get_cancel_kb())
     return "LOGIN_API_ID"
 
-
-# ─── LOGIN_API_ID ──────────────────────────────────────────────────
 
 async def login_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     val = update.message.text.strip()
@@ -2950,22 +1906,9 @@ async def login_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_plain(update.message, "⚠️ API ID — только цифры. Повторите ввод:", get_cancel_kb())
         return "LOGIN_API_ID"
     context.user_data["api_id"] = int(val)
-    await send_photo(
-        update.message, PHOTO_AUTH,
-        "🔑 Авторизация — Шаг 4 из 4\n\n"
-        "Введи свой API Hash — секретный ключ приложения Telegram.\n\n"
-        "Где найти:\n"
-        "Тот же раздел на my.telegram.org\n"
-        "Поле api_hash\n\n"
-        "Выглядит так: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6\n\n"
-        "Ключ хранится только на сервере.\n\n"
-        "Помощь: @userbotcbet",
-        get_cancel_kb()
-    )
+    await send_photo(update.message, PHOTO_AUTH, "🔑 Авторизация — Шаг 4 из 4\n\nВведи свой API Hash — секретный ключ приложения Telegram.\n\nГде найти:\nТот же раздел на my.telegram.org\nПоле api_hash\n\nВыглядит так: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6\n\nКлюч хранится только на сервере.\n\nПомощь: @userbotcbet", get_cancel_kb())
     return "LOGIN_API_HASH"
 
-
-# ─── LOGIN_API_HASH ────────────────────────────────────────────────
 
 async def login_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id    = str(update.effective_user.id)
@@ -2973,26 +1916,16 @@ async def login_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone    = context.user_data["phone"]
     api_id   = context.user_data["api_id"]
     context.user_data["api_hash"] = api_hash
-
     await send_plain(update.message, "⏳ Инициализация сессии Telethon...", None)
-
     session_path = os.path.join(DATA_DIR, f"session_{tg_id}")
     client = TelegramClient(session_path, api_id, api_hash)
-
     try:
         await client.connect()
         sent_code = await client.send_code_request(phone, force_sms=True)
         context.user_data["client"]          = client
         context.user_data["phone_code_hash"] = sent_code.phone_code_hash
         context.user_data["pin_entered"]     = ""
-        await send_photo(
-            update.message, PHOTO_AUTH,
-            "📩 Код подтверждения отправлен!\n\n"
-            "Telegram прислал тебе код в приложение или SMS.\n\n"
-            "Введи его с помощью пин-пада ниже.\n"
-            "Код действителен несколько минут — не затягивай!",
-            get_pinpad_kb("")
-        )
+        await send_photo(update.message, PHOTO_AUTH, "📩 Код подтверждения отправлен!\n\nTelegram прислал тебе код в приложение или SMS.\n\nВведи его с помощью пин-пада ниже.\nКод действителен несколько минут — не затягивай!", get_pinpad_kb(""))
         return "WAIT_CODE"
     except Exception as e:
         logger.error(f"Telethon send_code error для {tg_id}: {e}")
@@ -3002,19 +1935,14 @@ async def login_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MENU"
 
 
-# ─── WAIT_CODE: пин-пад ───────────────────────────────────────────
-
 async def pinpad_click_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
     tg_id   = str(query.from_user.id)
     data    = query.data
     await query.answer()
-
     entered = context.user_data.get("pin_entered", "")
-
     if data == "pin_noop":
         return "WAIT_CODE"
-
     if data.startswith("pin_digit_"):
         digit = data.split("_")[-1]
         if len(entered) < 10:
@@ -3023,20 +1951,17 @@ async def pinpad_click_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         try: await query.edit_message_reply_markup(reply_markup=get_pinpad_kb(entered))
         except Exception: pass
         return "WAIT_CODE"
-
     if data == "pin_back":
         entered = entered[:-1]
         context.user_data["pin_entered"] = entered
         try: await query.edit_message_reply_markup(reply_markup=get_pinpad_kb(entered))
         except Exception: pass
         return "WAIT_CODE"
-
     if data == "pin_submit":
         if not entered:
             await query.answer("⚠️ Введите код!", show_alert=True)
             return "WAIT_CODE"
         return await _do_sign_in(update, context, tg_id, entered)
-
     return "WAIT_CODE"
 
 async def _cleanup_failed_session(tg_id: str, client):
@@ -3055,54 +1980,22 @@ async def _finish_auth(update, context, tg_id: str, client):
     nick  = context.user_data.get("reg_nick", f"User_{tg_id[:4]}")
     async with _file_lock:
         users = load_json(USERS_FILE)
-        users[tg_id] = {
-            "nick":          nick,
-            "phone":         phone,
-            "api_id":        context.user_data["api_id"],
-            "api_hash":      context.user_data["api_hash"],
-            "authenticated": True,
-            "created_at":    datetime.now().strftime("%d.%m.%Y %H:%M")
-        }
+        users[tg_id] = {"nick": nick, "phone": phone, "api_id": context.user_data["api_id"], "api_hash": context.user_data["api_hash"], "authenticated": True, "created_at": datetime.now().strftime("%d.%m.%Y %H:%M")}
         save_json(USERS_FILE, users)
     USER_BOTS[tg_id] = client
     load_user_modules(client, tg_id)
-
-    msg  = update.callback_query.message if update.callback_query else update.message
-
-    # Выдаём пробную подписку при первой регистрации
+    msg = update.callback_query.message if update.callback_query else update.message
     sub    = load_sub(tg_id)
     is_new = not sub.get("plan")
     if is_new:
         from datetime import timezone, timedelta
         expires = (datetime.now(timezone.utc) + timedelta(days=5)).timestamp()
-        sub["plan"]        = "trial"
-        sub["expires"]     = expires
-        sub["chosen_sys"]  = []
-        sub["chosen_mods"] = []
+        sub["plan"] = "trial"; sub["expires"] = expires; sub["chosen_sys"] = []; sub["chosen_mods"] = []
         save_sub(tg_id, sub)
-
     if is_new:
-        await send_photo(
-            msg, PHOTO_MENU,
-            f"🎉 Добро пожаловать, {nick}!\n\n"
-            "Твой юзербот успешно запущен в облаке.\n\n"
-            "🆓 Тебе выдана пробная подписка на 5 дней!\n\n"
-            "Выбери 1 системный модуль который хочешь попробовать:",
-            InlineKeyboardMarkup([
-                [InlineKeyboardButton("🤖 Автоответчик",   callback_data="sub_choose_sys_autoreply_trial")],
-                [InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")],
-            ])
-        )
+        await send_photo(msg, PHOTO_MENU, f"🎉 Добро пожаловать, {nick}!\n\nТвой юзербот успешно запущен в облаке.\n\n🆓 Тебе выдана пробная подписка на 5 дней!\n\nВыбери 1 системный модуль который хочешь попробовать:", InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_trial")],[InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")]]))
     else:
-        await send_photo(
-            msg, PHOTO_MENU,
-            f"🎉 Добро пожаловать, {nick}!\n\n"
-            "Твой юзербот успешно запущен в облаке.\n\n"
-            "⚡️ Сессия Telethon активна\n"
-            "🧩 Модули готовы к установке\n\n"
-            "Выбери раздел:",
-            get_user_kb()
-        )
+        await send_photo(msg, PHOTO_MENU, f"🎉 Добро пожаловать, {nick}!\n\nТвой юзербот успешно запущен в облаке.\n\n⚡️ Сессия Telethon активна\n🧩 Модули готовы к установке\n\nВыбери раздел:", get_user_kb())
     return "MENU"
 
 async def _do_sign_in(update, context, tg_id: str, code: str):
@@ -3114,17 +2007,8 @@ async def _do_sign_in(update, context, tg_id: str, code: str):
         await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
         return await _finish_auth(update, context, tg_id, client)
     except SessionPasswordNeededError:
-        logger.info(f"2FA требуется для {tg_id}")
         context.user_data["awaiting_2fa"] = True
-        await send_photo(
-            query.message, PHOTO_AUTH,
-            "🔐 Двухфакторная аутентификация\n\n"
-            "На твоём аккаунте включён облачный пароль (2FA).\n\n"
-            "Введи пароль который ты задал в настройках Telegram:\n"
-            "Настройки → Конфиденциальность → Облачный пароль\n\n"
-            "Пароль передаётся напрямую в Telegram и не сохраняется.",
-            get_cancel_kb()
-        )
+        await send_photo(query.message, PHOTO_AUTH, "🔐 Двухфакторная аутентификация\n\nНа твоём аккаунте включён облачный пароль (2FA).\n\nВведи пароль который ты задал в настройках Telegram:\nНастройки → Конфиденциальность → Облачный пароль\n\nПароль передаётся напрямую в Telegram и не сохраняется.", get_cancel_kb())
         return "WAIT_2FA"
     except Exception as e:
         logger.error(f"sign_in error для {tg_id}: {e}")
@@ -3132,8 +2016,6 @@ async def _do_sign_in(update, context, tg_id: str, code: str):
         await send_photo(query.message, PHOTO_AUTH, f"❌ Ошибка входа: {e}\n\nПопробуйте снова — /start", get_guest_kb())
         return "MENU"
 
-
-# ─── WAIT_2FA ─────────────────────────────────────────────────────
 
 async def wait_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id    = str(update.effective_user.id)
@@ -3149,13 +2031,10 @@ async def wait_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MENU"
 
 
-# ─── MODULE_INSTALL ────────────────────────────────────────────────
-
 async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id     = str(update.effective_user.id)
     code_text = ""
     mod_name  = f"module_{random.randint(1000, 9999)}"
-
     if update.message.document:
         doc = update.message.document
         if not doc.file_name.endswith(".py"):
@@ -3183,11 +2062,9 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
         else:
             await send_plain(update.message, "❌ Отправьте прямую ссылку на .py файл или прикрепите файл документом.", get_cancel_kb())
             return "MODULE_INSTALL"
-
     if not code_text:
         await send_plain(update.message, "❌ Файл пуст.", get_user_kb())
         return "MENU"
-
     m_file = os.path.join(DATA_DIR, f"user_modules_{tg_id}.json")
     async with _file_lock:
         m_data = load_json(m_file)
@@ -3195,23 +2072,16 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
     plan    = get_plan(tg_id)
     limit   = plan["mod_slots"]
     if current >= limit:
-        await send_plain(update.message,
-            f"⚠️ Достигнут лимит модулей ({current}/{limit}) для твоей подписки.\n"
-
-            f"Улучши подписку в разделе 💎 Подписка.",
-            get_user_kb())
+        await send_plain(update.message, f"⚠️ Достигнут лимит модулей ({current}/{limit}) для твоей подписки.\nУлучши подписку в разделе 💎 Подписка.", get_user_kb())
         return "MENU"
-
     user_dir = os.path.join(MODULES_DIR, f"user_{tg_id}")
     os.makedirs(user_dir, exist_ok=True)
     with open(os.path.join(user_dir, f"{mod_name}.py"), "w", encoding="utf-8") as f:
         f.write(code_text)
-
     async with _file_lock:
         m_data.setdefault("modules", [])
         m_data["modules"].append({"name": mod_name, "date": datetime.now().strftime("%d.%m.%Y"), "source": "custom"})
         save_json(m_file, m_data)
-
     if tg_id in USER_BOTS:
         async with _file_lock:
             users = load_json(USERS_FILE)
@@ -3223,233 +2093,82 @@ async def module_download_handler(update: Update, context: ContextTypes.DEFAULT_
     return "MENU"
 
 
-# ─── SO2: Ввод данных ────────────────────────────────────────────
-
 async def so2_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     text  = update.message.text.strip()
-    step  = SO2_AWAIT.get(tg_id)
-    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]])
 
-    if not step:
+    if context.user_data.get("so2_await_pass"):
+        context.user_data.pop("so2_await_pass", None)
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_modules_menu")]])
+        if text != ADMIN_PASSWORD:
+            await send_plain(update.message, "❌ Неверный пароль.\n\n🎮 Standoff 2 модуль сейчас в разработке.\nСледи за обновлениями на канале @userbotcbet", back_kb)
+            return "MENU"
+        profile = get_so2_user(tg_id)
+        registered = bool(profile.get("so2_id"))
+        if registered:
+            so2_id = profile.get("so2_id", "—"); gold = profile.get("gold", "не указан"); nick = profile.get("nick", "—")
+            text_msg = f"🎮 Standoff 2\n\n👤 Ник: {nick}\n🆔 ID: {so2_id}\n💰 Gold: {gold}\n\nВыбери действие:"
+        else:
+            text_msg = "🎮 Standoff 2\n\nТы ещё не зарегистрирован.\nЗарегистрируйся чтобы сохранить профиль."
+        await send_plain(update.message, text_msg, so2_main_kb(registered))
         return "SO2"
 
-    accs = load_so2_users()
-
-    if step == "reg_id":
-        # Сохраняем ID, спрашиваем баланс голды
-        if tg_id not in accs:
-            accs[tg_id] = {}
-        accs[tg_id]["so2_id"] = text
-        save_so2_users(accs)
-        SO2_AWAIT[tg_id] = "reg_gold"
-        await send_plain(update.message,
-            "📝 Регистрация — Шаг 2/2\n"
-            f"ID сохранён: {text}\n"
-            "Теперь введи свой баланс голды (Gold):\n"
-            "(Найти в профиле игры)",
-            back_kb)
-        return "SO2"
-
-    elif step == "reg_gold":
-        # Сохраняем баланс голды
-        if tg_id not in accs:
-            accs[tg_id] = {}
-        accs[tg_id]["gold"] = text
-        save_so2_users(accs)
-        SO2_AWAIT.pop(tg_id, None)
-        so2_id = accs[tg_id].get("so2_id", "—")
-        # Пробуем получить ник из so2checker_bot
-        if tg_id in USER_BOTS:
-            result = await so2_fetch(tg_id, so2_id)
-            if result:
-                # Парсим ник из ответа бота
-                for line in result.split("\n"):
-                    if "Никнейм" in line or "Ник" in line:
-                        parts = line.split(":")
-                        if len(parts) > 1:
-                            accs[tg_id]["nick"] = parts[1].strip()
-                            save_so2_users(accs)
-                            break
-        await send_plain(update.message,
-            "✅ Регистрация завершена!\n"
-            f"🆔 ID: {so2_id}\n"
-            f"💰 Баланс голды: {text}\n"
-            "Теперь можешь смотреть свой профиль!",
-            so2_main_kb(True))
-        return "SO2"
-
-    elif step == "login_id":
-        # Вход по ID
-        if tg_id not in accs:
-            accs[tg_id] = {}
-        accs[tg_id]["so2_id"] = text
-        save_so2_users(accs)
-        SO2_AWAIT[tg_id] = "login_gold"
-        await send_plain(update.message,
-            f"🔑 ID принят: {text}\n"
-            "Введи свой баланс голды:",
-            back_kb)
-        return "SO2"
-
-    elif step == "login_gold":
-        if tg_id not in accs:
-            accs[tg_id] = {}
-        accs[tg_id]["gold"] = text
-        save_so2_users(accs)
-        SO2_AWAIT.pop(tg_id, None)
-        so2_id = accs[tg_id].get("so2_id", "—")
-        await send_plain(update.message,
-            "✅ Вход выполнен!\n"
-            f"🆔 ID: {so2_id}\n"
-            f"💰 Баланс голды: {text}",
-            so2_main_kb(True))
-        return "SO2"
-
-    SO2_AWAIT.pop(tg_id, None)
-    return "SO2"
-
-
-# ─── SO2: Пароль ──────────────────────────────────────────────────
-
-async def so2_password_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tg_id = str(update.effective_user.id)
-
-    if not context.user_data.get("so2_await_pass"):
-        return await so2_input_handler(update, context)
-
-    text = update.message.text.strip()
-    context.user_data.pop("so2_await_pass", None)
-    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]])
-
-    if text != ADMIN_PASSWORD:
-        await send_plain(update.message,
-            "❌ Неверный пароль.\n\n"
-            "🎮 Standoff 2 модуль сейчас в разработке.\n"
-            "Следи за обновлениями на канале @userbotcbet",
-            back_kb)
-        return "MENU"
-
-    # Пароль верный — показываем раздел SO2
-    profile = get_so2_user(tg_id)
-    registered = bool(profile.get("so2_id"))
-    if registered:
-        so2_id = profile.get("so2_id", "—")
-        gold   = profile.get("gold", "не указан")
-        nick   = profile.get("nick", "—")
-        nick   = profile.get("nick", "—")
-        text_msg = (
-            "🎮 Standoff 2\n\n"
-            f"👤 Ник: {nick}\n"
-            f"🆔 ID: {so2_id}\n"
-            f"💰 Gold: {gold}\n\n"
-            "Выбери действие:"
-        )
-    else:
-        text_msg = (
-            "🎮 Standoff 2\n\n"
-            "Ты ещё не зарегистрирован.\n"
-            "Зарегистрируйся чтобы сохранить профиль."
-        )
-    await send_plain(update.message, text_msg, so2_main_kb(registered))
-    return "SO2"
-    return "SO2"
-
-
-# ─── SO2: Ввод данных ─────────────────────────────────────────────
-
-async def so2_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tg_id = str(update.effective_user.id)
-    text  = update.message.text.strip()
     step  = context.user_data.get("so2_step")
     back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_so2")]])
-
     if not step:
         return "SO2"
 
-    # Поиск игрока
     if step == "search":
         context.user_data.pop("so2_step", None)
         if tg_id not in USER_BOTS:
-            await send_plain(update.message,
-                "⚠️ Юзербот не запущен. Нажми Обновить или /start.", back_kb)
+            await send_plain(update.message, "⚠️ Юзербот не запущен. Нажми Обновить или /start.", back_kb)
             return "SO2"
         msg = await update.message.reply_text(f"⏳ Ищу игрока {text}...")
         result = await so2_fetch(tg_id, text)
         if result:
-            await msg.edit_text(
-                f"Профиль игрока:\n\n{result}\n\n@userbotcbet",
-                reply_markup=back_kb)
+            await msg.edit_text(f"Профиль игрока:\n\n{result}\n\n@userbotcbet", reply_markup=back_kb)
         else:
-            await msg.edit_text(
-                "Игрок не найден или ошибка. Проверь ID.", reply_markup=back_kb)
+            await msg.edit_text("Игрок не найден или ошибка. Проверь ID.", reply_markup=back_kb)
         return "SO2"
 
-    # Вход — шаг 1: ник
     if step == "login_nick":
         context.user_data["so2_data"]["nick"] = text
         context.user_data["so2_step"] = "login_id"
-        await send_plain(update.message,
-            "🔑 Вход — Шаг 2/2\n\nВведи свой Standoff 2 ID:",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        await send_plain(update.message, "🔑 Вход — Шаг 2/2\n\nВведи свой Standoff 2 ID:", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
         return "SO2"
 
-    # Вход — шаг 2: ID
     if step == "login_id":
-        nick  = context.user_data.get("so2_data", {}).get("nick", "")
+        nick = context.user_data.get("so2_data", {}).get("nick", "")
         so2_id = text
-        context.user_data.pop("so2_step", None)
-        context.user_data.pop("so2_data", None)
+        context.user_data.pop("so2_step", None); context.user_data.pop("so2_data", None)
         save_so2_user(tg_id, {"so2_id": so2_id, "nick": nick, "gold": ""})
-        await send_plain(update.message,
-            f"✅ Вход выполнен!\n\n"
-            f"👤 Ник: {nick}\n"
-            f"🆔 ID: {so2_id}\n\n"
-            "Теперь можешь смотреть профиль через Мой профиль",
-            InlineKeyboardMarkup([[InlineKeyboardButton("🎮 Открыть SO2", callback_data="u_so2_enter")]]))
+        await send_plain(update.message, f"✅ Вход выполнен!\n\n👤 Ник: {nick}\n🆔 ID: {so2_id}\n\nТеперь можешь смотреть профиль", InlineKeyboardMarkup([[InlineKeyboardButton("🎮 Открыть SO2", callback_data="u_so2_enter")]]))
         return "SO2"
 
-    # Регистрация — шаг 1: ник
     if step == "nick":
         context.user_data["so2_data"]["nick"] = text
         context.user_data["so2_step"] = "id"
-        await send_plain(update.message,
-            "📝 Регистрация — Шаг 2/2\n\nВведи свой Standoff 2 ID:\n(Найти в профиле игры под никнеймом)",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
+        await send_plain(update.message, "📝 Регистрация — Шаг 2/2\n\nВведи свой Standoff 2 ID:\n(Найти в профиле игры под никнеймом)", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Отмена", callback_data="u_so2")]]))
         return "SO2"
 
-    # Регистрация — шаг 2: ID → сохраняем
     if step == "id":
         context.user_data["so2_data"]["so2_id"] = text
         context.user_data["so2_data"]["gold"] = ""
-        data = context.user_data.pop("so2_data", {})
-        context.user_data.pop("so2_step", None)
+        data = context.user_data.pop("so2_data", {}); context.user_data.pop("so2_step", None)
         save_so2_user(tg_id, data)
-        await send_plain(update.message,
-            f"Профиль сохранён!\n\n"
-            f"Ник: {data.get('nick', '?')}\n"
-            f"ID: {data.get('so2_id', '?')}\n"
-            f"Gold: {data.get('gold', '?')}\n\n"
-            "Теперь можешь смотреть статистику.",
-            InlineKeyboardMarkup([[InlineKeyboardButton("Открыть SO2", callback_data="u_so2")]]))
+        await send_plain(update.message, f"Профиль сохранён!\n\nНик: {data.get('nick','?')}\nID: {data.get('so2_id','?')}\n\nТеперь можешь смотреть статистику.", InlineKeyboardMarkup([[InlineKeyboardButton("Открыть SO2", callback_data="u_so2")]]))
         return "SO2"
 
     return "SO2"
 
 
-# ─── OSINT: Ввод данных расследования ────────────────────────────
-
 async def osint_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     text  = update.message.text.strip()
-
     if tg_id not in OSINT_SESSIONS:
         return "MENU"
-
     sess = OSINT_SESSIONS[tg_id]
     step = sess["step"]
-
-    # Пропуск через /skip
     if text.lower() == "/skip":
         _, _, skippable = OSINT_FIELDS[step]
         if not skippable:
@@ -3460,19 +2179,12 @@ async def osint_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         key = OSINT_FIELDS[step][0]
         sess["data"][key] = text
         step += 1
-
-    # Если все поля заполнены — строим дерево
     if step >= len(OSINT_FIELDS):
         tree = _osint_build_tree(sess["data"])
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Новое расследование", callback_data="u_osint")],
-            [InlineKeyboardButton("◀️ В меню", callback_data="back_main")],
-        ])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Новое расследование", callback_data="u_osint")],[InlineKeyboardButton("◀️ В меню", callback_data="back_main")]])
         await send_plain(update.message, tree, kb)
         del OSINT_SESSIONS[tg_id]
         return "MENU"
-
-    # Следующий шаг
     sess["step"] = step
     _, _, skippable = OSINT_FIELDS[step]
     kb = _osint_skip_kb() if skippable else _osint_required_kb()
@@ -3480,65 +2192,33 @@ async def osint_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     return "OSINT"
 
 
-# ─── UNPARSER PASSWORD: Проверка пароля парсера ──────────────────
-
 async def unparser_password_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
-
     if not context.user_data.get("await_unparser_pass"):
         return "UNPARSER"
-
     password = update.message.text.strip()
     context.user_data.pop("await_unparser_pass", None)
-
     if password != ADMIN_PASSWORD:
-        await send_plain(update.message,
-            "❌ Неверный пароль.\n\n"
-            "🔍 Парсер юзернеймов пока находится в разработке.\n"
-            "Следи за обновлениями на канале @userbotcbet",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]))
+        await send_plain(update.message, "❌ Неверный пароль.", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]))
         return "MENU"
-
-    # Пароль верный — открываем парсер
     if tg_id not in UNPARSER_SESSIONS:
-        UNPARSER_SESSIONS[tg_id] = {
-            "cfg": {"length": 8, "digits": True, "count": 5},
-            "history": [],
-            "current_idx": -1,
-            "running": False,
-        }
+        UNPARSER_SESSIONS[tg_id] = {"cfg": {"length": 8, "digits": True, "count": 5}, "history": [], "current_idx": -1, "running": False}
     cfg = UNPARSER_SESSIONS[tg_id]["cfg"]
     await send_plain(update.message, _unp_menu_text(cfg), _unp_menu_kb(cfg))
     return "UNPARSER"
 
 
-# ─── WAIT_MIRROR_TOKEN: Ввод токена зеркала ──────────────────────
-
 async def wait_mirror_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     token = update.message.text.strip()
-
-    # Базовая проверка формата токена
     if ":" not in token or len(token) < 30:
-        await send_plain(update.message,
-            "❌ Неверный формат токена.\n"
-
-            "Токен выглядит так: 123456789:AAFxxxxxxxx\n"
-
-            "Попробуй ещё раз:",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
+        await send_plain(update.message, "❌ Неверный формат токена.\nТокен выглядит так: 123456789:AAFxxxxxxxx\nПопробуй ещё раз:", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
         return "WAIT_MIRROR_TOKEN"
-
-    # Проверяем лимит зеркал
     mirrors = load_mirrors()
     active_count = sum(1 for m in mirrors.values() if m.get("active"))
     if active_count >= MAX_MIRRORS and tg_id not in mirrors:
-        await send_plain(update.message,
-            f"⚠️ Достигнут лимит зеркал ({MAX_MIRRORS}). Попробуй позже.",
-            get_user_kb())
+        await send_plain(update.message, f"⚠️ Достигнут лимит зеркал ({MAX_MIRRORS}). Попробуй позже.", get_user_kb())
         return "MENU"
-
-    # Проверяем что токен рабочий
     await send_plain(update.message, "⏳ Проверяем токен...", None)
     try:
         import aiohttp as _aio
@@ -3547,155 +2227,88 @@ async def wait_mirror_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 data = await resp.json()
                 if not data.get("ok"):
                     raise Exception(data.get("description", "Неверный токен"))
-                bot_info = data["result"]
-                bot_name = bot_info.get("username", "unknown")
+                bot_name = data["result"].get("username", "unknown")
     except Exception as e:
-        await send_plain(update.message,
-            f"❌ Ошибка токена: {e}\n\nПроверь токен и попробуй снова:",
-            InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
+        await send_plain(update.message, f"❌ Ошибка токена: {e}\n\nПроверь токен и попробуй снова:", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_partner")]]))
         return "WAIT_MIRROR_TOKEN"
-
-    # Сохраняем и запускаем зеркало
     users_all = load_json(USERS_FILE)
     partner_nick = users_all.get(tg_id, {}).get("nick", tg_id)
-
-    mirrors[tg_id] = {
-        "token":   token,
-        "bot_username": bot_name,
-        "nick":    partner_nick,
-        "active":  True,
-        "created": datetime.now().strftime("%d.%m.%Y %H:%M")
-    }
+    mirrors[tg_id] = {"token": token, "bot_username": bot_name, "nick": partner_nick, "active": True, "created": datetime.now().strftime("%d.%m.%Y %H:%M")}
     save_mirrors(mirrors)
-
     success = await start_mirror_bot(tg_id, token, partner_nick)
     if success:
-        await send_plain(update.message,
-            f"✅ Зеркало подключено!\n"
-
-            f"Бот: @{bot_name}\n"
-            f"За каждого нового юзера через твой бот — +1 день к подписке.\n"
-
-            f"Поделись ссылкой: t.me/{bot_name}",
-            get_user_kb())
+        await send_plain(update.message, f"✅ Зеркало подключено!\nБот: @{bot_name}\nЗа каждого нового юзера через твой бот — +1 день к подписке.\nПоделись ссылкой: t.me/{bot_name}", get_user_kb())
     else:
-        mirrors[tg_id]["active"] = False
-        save_mirrors(mirrors)
-        await send_plain(update.message,
-            "❌ Не удалось запустить зеркало. Проверь что бот не запущен в другом месте.",
-            get_user_kb())
+        mirrors[tg_id]["active"] = False; save_mirrors(mirrors)
+        await send_plain(update.message, "❌ Не удалось запустить зеркало. Проверь что бот не запущен в другом месте.", get_user_kb())
     return "MENU"
 
-
-# ─── WAIT_TIMENICK: Ввод никнейма или секунды ────────────────────
 
 async def wait_timenick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id  = str(update.effective_user.id)
     text   = update.message.text.strip()
     field  = context.user_data.get("await_timenick")
-
     cfg = _load_timenick_cfg(tg_id)
-
     if field == "nick":
         if not text:
             await send_plain(update.message, "⚠️ Никнейм не может быть пустым.", None)
             return "WAIT_TIMENICK"
-        cfg["nickname"] = text
-        _save_timenick_cfg(tg_id, cfg)
-        # Перезапускаем если включён
+        cfg["nickname"] = text; _save_timenick_cfg(tg_id, cfg)
         client = USER_BOTS.get(tg_id)
         if client and cfg.get("enabled"):
-            client._timenick_stop(tg_id)
-            asyncio.create_task(client._timenick_start(tg_id))
+            client._timenick_stop(tg_id); asyncio.create_task(client._timenick_start(tg_id))
         await send_plain(update.message, f"✅ Никнейм сохранён: {text}", None)
-
     elif field == "second":
         if not text.lstrip("-").isdigit() or not (0 <= int(text) <= 59):
             await send_plain(update.message, "⚠️ Введи число от 0 до 59.", None)
             return "WAIT_TIMENICK"
-        cfg["second"] = int(text)
-        _save_timenick_cfg(tg_id, cfg)
+        cfg["second"] = int(text); _save_timenick_cfg(tg_id, cfg)
         client = USER_BOTS.get(tg_id)
         if client and cfg.get("enabled"):
-            client._timenick_stop(tg_id)
-            asyncio.create_task(client._timenick_start(tg_id))
+            client._timenick_stop(tg_id); asyncio.create_task(client._timenick_start(tg_id))
         await send_plain(update.message, f"✅ Секунда обновления: {text}с", None)
-
     elif field == "tz":
         if not text.lstrip("-").isdigit() or not (-12 <= int(text) <= 14):
             await send_plain(update.message, "⚠️ Введи число от -12 до 14.", None)
             return "WAIT_TIMENICK"
-        cfg["tz_offset"] = int(text)
-        _save_timenick_cfg(tg_id, cfg)
+        cfg["tz_offset"] = int(text); _save_timenick_cfg(tg_id, cfg)
         client = USER_BOTS.get(tg_id)
         if client and cfg.get("enabled"):
-            client._timenick_stop(tg_id)
-            asyncio.create_task(client._timenick_start(tg_id))
+            client._timenick_stop(tg_id); asyncio.create_task(client._timenick_start(tg_id))
         await send_plain(update.message, f"✅ Часовой пояс: UTC+{text}", None)
-
     context.user_data.pop("await_timenick", None)
     await _show_sysmods(update.message, tg_id, "timenick")
     return "MENU"
 
 
-# ─── SONYA_CHAT ───────────────────────────────────────────────────
-
 async def sonya_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_photo(
-        update.message, PHOTO_SONYA_SAD,
-        "🤖 Соня сейчас не на связи. Попробуйте позже.\n\n"
-        "📢 Канал: @userbotcbet",
-        get_cancel_kb()
-    )
+    await send_photo(update.message, PHOTO_SONYA_SAD, "🤖 Соня сейчас не на связи. Попробуйте позже.\n\n📢 Канал: @userbotcbet", get_cancel_kb())
     return "SONYA_CHAT"
 
-
-# ─── /setimages ───────────────────────────────────────────────────
 
 async def cmd_set_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["setimages_step"] = 0
     context.user_data["setimages_keys"] = ["auth", "modules", "sonya_sad", "menu"]
-    context.user_data["setimages_names"] = [
-        "auth.jpg (авторизация)",
-        "modules.jpg (модули)",
-        "sonya_sad.jpg (Соня)",
-        "menu.jpg (главное меню)"
-    ]
-    await send_plain(
-        update.message,
-        "🖼 Загрузка картинок\n\n"
-        "Отправь фото по очереди:\n"
-        "1. auth.jpg — экран авторизации\n"
-        "2. modules.jpg — экран модулей\n"
-        "3. sonya_sad.jpg — экран Сони\n"
-        "4. menu.jpg — главное меню\n\n"
-        "Отправь первое фото:",
-        None
-    )
+    context.user_data["setimages_names"] = ["auth.jpg (авторизация)", "modules.jpg (модули)", "sonya_sad.jpg (Соня)", "menu.jpg (главное меню)"]
+    await send_plain(update.message, "🖼 Загрузка картинок\n\nОтправь фото по очереди:\n1. auth.jpg\n2. modules.jpg\n3. sonya_sad.jpg\n4. menu.jpg\n\nОтправь первое фото:", None)
     return "SET_IMAGES"
 
 async def setimages_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:
         await send_plain(update.message, "❌ Отправь именно фото (не файлом).", None)
         return "SET_IMAGES"
-
     step  = context.user_data.get("setimages_step", 0)
     keys  = context.user_data.get("setimages_keys", [])
     names = context.user_data.get("setimages_names", [])
-
     if step >= len(keys):
         await send_plain(update.message, "✅ Все картинки уже загружены!", None)
         return "MENU"
-
     file_id = update.message.photo[-1].file_id
     photo_ids = load_json(PHOTO_IDS_FILE)
     photo_ids[keys[step]] = file_id
     save_json(PHOTO_IDS_FILE, photo_ids)
-    logger.info(f"Сохранён file_id для {keys[step]}: {file_id}")
-
     step += 1
     context.user_data["setimages_step"] = step
-
     if step < len(keys):
         await send_plain(update.message, f"✅ {names[step-1]} сохранена!\n\nТеперь отправь: {names[step]}", None)
         return "SET_IMAGES"
@@ -3705,23 +2318,14 @@ async def setimages_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "MENU"
 
 
-# ─── PROMO ────────────────────────────────────────────────────────
-
 async def promo_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     code  = update.message.text.strip().upper()
-
     async with _file_lock:
         promos = load_json(PROMO_FILE)
-
     if code not in promos:
-        await send_plain(update.message,
-            "❌ Код не найден. Проверь правильность ввода.\n"
-
-            "Коды можно получить на канале @userbotcbet",
-            get_cancel_kb())
+        await send_plain(update.message, "❌ Код не найден. Проверь правильность ввода.\nКоды можно получить на канале @userbotcbet", get_cancel_kb())
         return "WAIT_PROMO_ACTIVATE"
-
     promo = promos[code]
     if tg_id in promo.get("used_by", []):
         await send_plain(update.message, "⚠️ Этот код уже был использован тобой.", get_user_kb())
@@ -3729,91 +2333,43 @@ async def promo_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(promo.get("used_by", [])) >= promo.get("max_uses", 1):
         await send_plain(update.message, "⚠️ Код исчерпан.", get_user_kb())
         return "MENU"
-
-    # Применяем код
     plan_key = promo.get("plan", "basic")
     days     = promo.get("days", SUB_PLANS.get(plan_key, {}).get("days", 30))
-
     from datetime import timezone, timedelta
     sub = load_sub(tg_id)
-    # Если подписка ещё активна — продлеваем
     now_ts = datetime.now(timezone.utc).timestamp()
     base   = max(sub.get("expires", now_ts), now_ts)
-    sub["plan"]    = plan_key
-    sub["expires"] = base + days * 86400
+    sub["plan"] = plan_key; sub["expires"] = base + days * 86400
     save_sub(tg_id, sub)
-
     async with _file_lock:
         promos[code]["used_by"].append(tg_id)
         save_json(PROMO_FILE, promos)
-
     plan = SUB_PLANS.get(plan_key, SUB_PLANS["basic"])
-
-    # Уведомление админу
     try:
-        used_count = len(promos[code]["used_by"])
-        max_uses   = promos[code].get("max_uses", 1)
         async with _file_lock:
             users_all = load_json(USERS_FILE)
         user_nick = users_all.get(tg_id, {}).get("nick", tg_id)
-        await context.bot.send_message(
-            chat_id=ADMIN_TG_ID,
-            text=(
-                f"🎟 Промокод активирован!\n\n"
-                f"Код: `{code}`\n"
-                f"Юзер: {user_nick} (`{tg_id}`)\n"
-                f"План: {plan['emoji']} {plan['name']} — {days} дн.\n"
-                f"Использований: {used_count}/{max_uses}"
-            ),
-            parse_mode=ParseMode.MARKDOWN
-        )
+        await context.bot.send_message(chat_id=ADMIN_TG_ID, text=f"🎟 Промокод активирован!\n\nКод: `{code}`\nЮзер: {user_nick} (`{tg_id}`)\nПлан: {plan['emoji']} {plan['name']} — {days} дн.\nИспользований: {len(promos[code]['used_by'])}/{promos[code].get('max_uses',1)}", parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         logger.warning(f"Не удалось отправить уведомление админу: {e}")
-
     if plan_key == "pro":
-        # Про — открываем всё без выбора
-        await send_plain(update.message,
-            f"✅ Код активирован!\n\n"
-            f"{plan['emoji']} {plan['name']} — {days} дней\n"
-            "Все модули и системные функции доступны.",
-            get_user_kb())
+        await send_plain(update.message, f"✅ Код активирован!\n\n{plan['emoji']} {plan['name']} — {days} дней\nВсе модули и системные функции доступны.", get_user_kb())
     elif plan_key == "basic":
-        # Базовая — выбираем 2 системных модуля
-        await send_plain(update.message,
-            f"✅ Код активирован!\n\n"
-            f"{plan['emoji']} {plan['name']} — {days} дней\n\n"
-            "Выбери до 2 системных модулей (нажимай по одному):",
-            InlineKeyboardMarkup([
-                [InlineKeyboardButton("🤖 Автоответчик",   callback_data="sub_choose_sys_autoreply_basic")],
-                [InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_basic")],
-            ]))
+        await send_plain(update.message, f"✅ Код активирован!\n\n{plan['emoji']} {plan['name']} — {days} дней\n\nВыбери до 2 системных модулей (нажимай по одному):", InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_basic")],[InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_basic")]]))
     elif plan_key == "trial":
-        # Пробная — выбираем 1 системный модуль
-        await send_plain(update.message,
-            f"✅ Код активирован!\n\n"
-            f"{plan['emoji']} {plan['name']} — {days} дней\n\n"
-            "Выбери 1 системный модуль:",
-            InlineKeyboardMarkup([
-                [InlineKeyboardButton("🤖 Автоответчик",   callback_data="sub_choose_sys_autoreply_trial")],
-                [InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")],
-            ]))
+        await send_plain(update.message, f"✅ Код активирован!\n\n{plan['emoji']} {plan['name']} — {days} дней\n\nВыбери 1 системный модуль:", InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_trial")],[InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")]]))
     else:
-        await send_plain(update.message,
-            f"✅ Код активирован! {plan['emoji']} {plan['name']} — {days} дней",
-            get_user_kb())
+        await send_plain(update.message, f"✅ Код активирован! {plan['emoji']} {plan['name']} — {days} дней", get_user_kb())
     return "MENU"
 
-
-# ─── ADMIN ────────────────────────────────────────────────────────
 
 async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() != ADMIN_PASSWORD:
         await send_plain(update.message, "❌ Доступ отклонён.", get_guest_kb())
         return "MENU"
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("👥 Пользователи", callback_data="a_users"),
-         InlineKeyboardButton("🎫 Промокоды",    callback_data="a_promos")],
-        [InlineKeyboardButton("🪞 Рефералы",     callback_data="a_referrals")],
+        [InlineKeyboardButton("👥 Пользователи", callback_data="a_users"), InlineKeyboardButton("🎫 Промокоды", callback_data="a_promos")],
+        [InlineKeyboardButton("🪞 Рефералы", callback_data="a_referrals")],
         [InlineKeyboardButton("🚪 Выйти из админки", callback_data="back_main")]
     ])
     await send_plain(update.message, "👑 Панель администратора", kb)
@@ -3826,9 +2382,8 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def admin_kb():
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("👥 Пользователи", callback_data="a_users"),
-             InlineKeyboardButton("🎫 Промокоды",    callback_data="a_promos")],
-            [InlineKeyboardButton("🪞 Рефералы",     callback_data="a_referrals")],
+            [InlineKeyboardButton("👥 Пользователи", callback_data="a_users"), InlineKeyboardButton("🎫 Промокоды", callback_data="a_promos")],
+            [InlineKeyboardButton("🪞 Рефералы", callback_data="a_referrals")],
             [InlineKeyboardButton("🚪 Выйти из админки", callback_data="back_main")]
         ])
 
@@ -3854,10 +2409,9 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = []
         for k, v in promos.items():
             used = len(v.get("used_by", []))
-            plan_name = {"trial": "🆓 Пробная", "basic": "⭐️ Базовая", "pro": "👑 Про"}.get(v.get("plan", v.get("tier", "?")), "?")
+            plan_name = {"trial": "🆓 Пробная", "basic": "⭐️ Базовая", "pro": "👑 Про"}.get(v.get("plan", "?"), "?")
             lines.append(f"• {k} — {plan_name} {v.get('days','?')} дн. | {used}/{v.get('max_uses','∞')}")
-        txt = "🎫 Промокоды:\n\n" + "\n".join(lines)
-        await send_plain(query.message, txt, InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_admin")]]))
+        await send_plain(query.message, "🎫 Промокоды:\n\n" + "\n".join(lines), InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_admin")]]))
         return "ADMIN_MENU"
 
     if data == "a_referrals":
@@ -3869,94 +2423,48 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines_txt = []
         for pid, info in mirrors.items():
             status = "🟢" if pid in MIRROR_APPS else "🔴"
-            bot_un = info.get("bot_username", pid)
-            nick   = info.get("nick", pid)
-            refs   = get_mirror_stats(pid)["total"]
-            rows.append([InlineKeyboardButton(
-                f"{status} @{bot_un} ({nick}) — {refs} реф.",
-                callback_data=f"a_mirror_{pid}"
-            )])
+            bot_un = info.get("bot_username", pid); nick = info.get("nick", pid); refs = get_mirror_stats(pid)["total"]
+            rows.append([InlineKeyboardButton(f"{status} @{bot_un} ({nick}) — {refs} реф.", callback_data=f"a_mirror_{pid}")])
             lines_txt.append(f"{status} @{bot_un} | {nick} | {refs} реф.")
         rows.append([InlineKeyboardButton("◀️ Назад", callback_data="back_admin")])
-        await send_plain(
-            query.message,
-            "🪞 Зеркала и рефералы\n\n" + "\n".join(lines_txt) + "\n\nНажми на зеркало:",
-            InlineKeyboardMarkup(rows)
-        )
+        await send_plain(query.message, "🪞 Зеркала и рефералы\n\n" + "\n".join(lines_txt) + "\n\nНажми на зеркало:", InlineKeyboardMarkup(rows))
         return "ADMIN_MENU"
 
     if data.startswith("a_mirror_") and not data.startswith("a_mirror_toggle_") and not data.startswith("a_mirror_del_"):
-        pid      = data[len("a_mirror_"):]
-        mirrors  = load_mirrors()
-        info     = mirrors.get(pid, {})
+        pid = data[len("a_mirror_"):]; mirrors = load_mirrors(); info = mirrors.get(pid, {})
         if not info:
             await send_plain(query.message, "❌ Зеркало не найдено.", admin_kb())
             return "ADMIN_MENU"
-        stats    = get_mirror_stats(pid)
-        bot_un   = info.get("bot_username", "?")
-        nick     = info.get("nick", pid)
-        token    = info.get("token", "")
-        created  = info.get("created", "?")
-        active   = pid in MIRROR_APPS
-        status   = "🟢 Активно" if active else "🔴 Остановлено"
+        stats = get_mirror_stats(pid); bot_un = info.get("bot_username", "?"); nick = info.get("nick", pid)
+        token = info.get("token", ""); created = info.get("created", "?"); active = pid in MIRROR_APPS
         refs_all = load_referrals()
         ref_list = [(uid, d) for uid, d in refs_all.items() if d.get("partner_id") == pid]
         users_all = load_json(USERS_FILE)
-        ref_lines = []
-        for uid, d in ref_list[-5:]:
-            rn = users_all.get(uid, {}).get("nick", uid)
-            ref_lines.append(f"  • {rn} — {d.get('date','?')}") 
+        ref_lines = [f"  • {users_all.get(uid,{}).get('nick',uid)} — {d.get('date','?')}" for uid, d in ref_list[-5:]]
         ref_txt = "\n".join(ref_lines) if ref_lines else "  нет рефералов"
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                "⏸ Приостановить" if active else "▶️ Запустить",
-                callback_data=f"a_mirror_toggle_{pid}"
-            )],
+            [InlineKeyboardButton("⏸ Приостановить" if active else "▶️ Запустить", callback_data=f"a_mirror_toggle_{pid}")],
             [InlineKeyboardButton("🗑 Удалить зеркало", callback_data=f"a_mirror_del_{pid}")],
             [InlineKeyboardButton("◀️ Назад", callback_data="a_referrals")]
         ])
-        await send_plain(
-            query.message,
-            f"🪞 Зеркало @{bot_un}\n\n"
-            f"Партнёр: {nick} ({pid})\n"
-            f"Статус: {status}\n"
-            f"Создано: {created}\n"
-            f"Токен: {token[:12]}...\n"
-            f"Рефералов: {stats['total']}\n"
-            f"Бонусных дней: {stats['bonus_days']}\n\n"
-            f"Последние рефералы:\n{ref_txt}",
-            kb
-        )
+        await send_plain(query.message, f"🪞 Зеркало @{bot_un}\n\nПартнёр: {nick} ({pid})\nСтатус: {'🟢 Активно' if active else '🔴 Остановлено'}\nСоздано: {created}\nТокен: {token[:12]}...\nРефералов: {stats['total']}\nБонусных дней: {stats['bonus_days']}\n\nПоследние рефералы:\n{ref_txt}", kb)
         return "ADMIN_MENU"
 
     if data.startswith("a_mirror_toggle_"):
-        pid     = data[len("a_mirror_toggle_"):]
-        mirrors = load_mirrors()
-        info    = mirrors.get(pid, {})
+        pid = data[len("a_mirror_toggle_"):]; mirrors = load_mirrors(); info = mirrors.get(pid, {})
         if pid in MIRROR_APPS:
-            await stop_mirror_bot(pid)
-            mirrors[pid]["active"] = False
-            save_mirrors(mirrors)
-            await send_plain(query.message,
-                f"⏸ Зеркало @{info.get('bot_username','?')} приостановлено.",
-                InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"a_mirror_{pid}")]]))
+            await stop_mirror_bot(pid); mirrors[pid]["active"] = False; save_mirrors(mirrors)
+            await send_plain(query.message, f"⏸ Зеркало @{info.get('bot_username','?')} приостановлено.", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"a_mirror_{pid}")]]))
         else:
             success = await start_mirror_bot(pid, info["token"], info.get("nick", pid))
-            mirrors[pid]["active"] = success
-            save_mirrors(mirrors)
-            msg = f"▶️ Зеркало запущено." if success else "❌ Не удалось запустить."
-            await send_plain(query.message, msg,
-                InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"a_mirror_{pid}")]]))
+            mirrors[pid]["active"] = success; save_mirrors(mirrors)
+            await send_plain(query.message, "▶️ Зеркало запущено." if success else "❌ Не удалось запустить.", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"a_mirror_{pid}")]]))
         return "ADMIN_MENU"
 
     if data.startswith("a_mirror_del_"):
-        pid     = data[len("a_mirror_del_"):]
-        mirrors = load_mirrors()
-        info    = mirrors.get(pid, {})
-        bot_un  = info.get("bot_username", pid)
+        pid = data[len("a_mirror_del_"):]; mirrors = load_mirrors(); info = mirrors.get(pid, {}); bot_un = info.get("bot_username", pid)
         await stop_mirror_bot(pid)
-        if pid in mirrors:
-            del mirrors[pid]
+        if pid in mirrors: del mirrors[pid]
         save_mirrors(mirrors)
         await send_plain(query.message, f"🗑 Зеркало @{bot_un} удалено.", admin_kb())
         return "ADMIN_MENU"
@@ -3964,185 +2472,88 @@ async def admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return "MENU"
 
 
-# ─── /reset_me ────────────────────────────────────────────────────
-
 async def cmd_reset_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     async with _file_lock:
         users = load_json(USERS_FILE)
-        if tg_id in users:
-            del users[tg_id]
-            save_json(USERS_FILE, users)
+        if tg_id in users: del users[tg_id]; save_json(USERS_FILE, users)
     for ext in (".session", ".session-journal"):
         p = os.path.join(DATA_DIR, f"session_{tg_id}{ext}")
         if os.path.exists(p):
             try: os.remove(p)
             except Exception: pass
     if tg_id in USER_BOTS:
-        try:
-            await USER_BOTS[tg_id].disconnect()
-            del USER_BOTS[tg_id]
+        try: await USER_BOTS[tg_id].disconnect(); del USER_BOTS[tg_id]
         except Exception: pass
-    if tg_id in LOADED_MODULES:
-        del LOADED_MODULES[tg_id]
+    if tg_id in LOADED_MODULES: del LOADED_MODULES[tg_id]
     context.user_data.clear()
-    logger.info(f"Сброс аккаунта для {tg_id}")
-    await send_photo(
-        update.message, PHOTO_AUTH,
-        "🗑 Аккаунт сброшен.\n\n"
-        "Все данные удалены. Теперь можешь зарегистрироваться заново.",
-        get_guest_kb()
-    )
+    await send_photo(update.message, PHOTO_AUTH, "🗑 Аккаунт сброшен.\n\nВсе данные удалены. Теперь можешь зарегистрироваться заново.", get_guest_kb())
     return "MENU"
 
 
-# ═══════════════════════════════════════════════════════════════════
-# 🎟 ГЕНЕРАЦИЯ ПРОМОКОДОВ (только для админа)
-# ═══════════════════════════════════════════════════════════════════
-
 async def cmd_addpromo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /addpromo <план> <дней> <количество>
-    Пример: /addpromo pro 30 3
-    Планы: trial, basic, pro
-    """
     import random, string
-
-    tg_id = str(update.effective_user.id)
-    args  = context.args
-
-    if update.message.text.split()[1] if len(update.message.text.split()) > 1 else "" == "":
-        await update.message.reply_text(
-            "Использование: /addpromo <план> <дней> <количество>\n"
-            "Пример: /addpromo pro 30 3"
-        )
-        return "MENU"
-
-    # Проверка пароля через args или только для известных admin id
+    args = context.args
     if len(args) < 3:
-        await update.message.reply_text(
-            "Использование: /addpromo <план> <дней> <количество>\n"
-            "Пример: /addpromo pro 30 3"
-        )
+        await update.message.reply_text("Использование: /addpromo <план> <дней> <количество>\nПример: /addpromo pro 30 3")
         return "MENU"
-
     plan_key = args[0].lower()
     if plan_key not in SUB_PLANS:
         await update.message.reply_text(f"❌ Неизвестный план: {plan_key}\nДоступны: trial, basic, pro")
         return "MENU"
-
     try:
-        days  = int(args[1])
-        count = int(args[2])
+        days  = int(args[1]); count = int(args[2])
     except ValueError:
         await update.message.reply_text("❌ Дней и количество должны быть числами.")
         return "MENU"
-
-    if not (1 <= days <= 365):
-        await update.message.reply_text("❌ Дней: от 1 до 365.")
-        return "MENU"
-    if not (1 <= count <= 50):
-        await update.message.reply_text("❌ Количество: от 1 до 50.")
-        return "MENU"
-
+    if not (1 <= days <= 365): await update.message.reply_text("❌ Дней: от 1 до 365."); return "MENU"
+    if not (1 <= count <= 50): await update.message.reply_text("❌ Количество: от 1 до 50."); return "MENU"
     async with _file_lock:
         promos = load_json(PROMO_FILE)
-
     new_codes = []
     attempts  = 0
     while len(new_codes) < count and attempts < count * 10:
         code = "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        if code not in promos:  # гарантируем уникальность
+        if code not in promos:
             promos[code] = {"plan": plan_key, "days": days, "max_uses": 1, "used_by": []}
             new_codes.append(code)
         attempts += 1
-
     async with _file_lock:
         save_json(PROMO_FILE, promos)
-
     plan = SUB_PLANS[plan_key]
     lines = [f"{plan['emoji']} {plan['name']} — {days} дн.  →  `{c}`" for c in new_codes]
-    await update.message.reply_text(
-        f"✅ Создано {count} промокодов:\n\n" + "\n".join(lines),
-        parse_mode=ParseMode.MARKDOWN
-    )
+    await update.message.reply_text(f"✅ Создано {count} промокодов:\n\n" + "\n".join(lines), parse_mode=ParseMode.MARKDOWN)
     return "MENU"
 
 
-# ═══════════════════════════════════════════════════════════════════
-# 💳 ОБРАБОТКА ОПЛАТЫ STARS
-# ═══════════════════════════════════════════════════════════════════
-
 async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подтверждаем любой платёж."""
     await update.pre_checkout_query.answer(ok=True)
 
 async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выдаём подписку после успешной оплаты."""
     tg_id   = str(update.effective_user.id)
-    payload = update.message.successful_payment.payload  # sub_basic_123 или sub_pro_123
-
+    payload = update.message.successful_payment.payload
     from datetime import timezone, timedelta
-
-    if payload.startswith("sub_basic_"):
-        plan_key = "basic"
-    elif payload.startswith("sub_pro_"):
-        plan_key = "pro"
-    else:
-        return
-
-    plan = SUB_PLANS[plan_key]
-    sub  = load_sub(tg_id)
+    if payload.startswith("sub_basic_"):   plan_key = "basic"
+    elif payload.startswith("sub_pro_"): plan_key = "pro"
+    else: return
+    plan = SUB_PLANS[plan_key]; sub = load_sub(tg_id)
     now_ts = datetime.now(timezone.utc).timestamp()
     base   = max(sub.get("expires", now_ts), now_ts)
-    sub["plan"]    = plan_key
-    sub["expires"] = base + plan["days"] * 86400
+    sub["plan"] = plan_key; sub["expires"] = base + plan["days"] * 86400
     save_sub(tg_id, sub)
-
-
-    # Уведомление админу об оплате Stars
     try:
         async with _file_lock:
             users_all = load_json(USERS_FILE)
         user_nick = users_all.get(tg_id, {}).get("nick", tg_id)
         stars = update.message.successful_payment.total_amount
-        await context.bot.send_message(
-            chat_id=ADMIN_TG_ID,
-            text=(
-                f"💳 Оплата Stars!\n\n"
-                f"Юзер: {user_nick} (`{tg_id}`)\n"
-                f"План: {plan['emoji']} {plan['name']} — {plan['days']} дн.\n"
-                f"Сумма: {stars} ⭐"
-            ),
-            parse_mode=ParseMode.MARKDOWN
-        )
+        await context.bot.send_message(chat_id=ADMIN_TG_ID, text=f"💳 Оплата Stars!\n\nЮзер: {user_nick} (`{tg_id}`)\nПлан: {plan['emoji']} {plan['name']} — {plan['days']} дн.\nСумма: {stars} ⭐", parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         logger.warning(f"Не удалось отправить уведомление об оплате: {e}")
-
     if plan_key == "basic":
-        # Даём выбрать 2 системных модуля
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_basic")],
-            [InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_basic")],
-        ])
-        await update.message.reply_text(
-            f"✅ Оплата прошла! {plan['emoji']} {plan['name']} активирована на {plan['days']} дней.\n"
-
-            f"Выбери до 2 системных модулей (нажимай по одному):",
-            reply_markup=kb
-        )
+        await update.message.reply_text(f"✅ Оплата прошла! {plan['emoji']} {plan['name']} активирована на {plan['days']} дней.\nВыбери до 2 системных модулей (нажимай по одному):", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_basic")],[InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_basic")]]))
     else:
-        await update.message.reply_text(
-            f"✅ Оплата прошла! {plan['emoji']} {plan['name']} активирована на {plan['days']} дней.\n"
+        await update.message.reply_text(f"✅ Оплата прошла! {plan['emoji']} {plan['name']} активирована на {plan['days']} дней.\nВсе модули и системные функции доступны.", reply_markup=get_user_kb())
 
-            f"Все модули и системные функции доступны.",
-            reply_markup=get_user_kb()
-        )
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 🚀 ТОЧКА ВХОДА
-# ═══════════════════════════════════════════════════════════════════
 
 def main():
     init_system()
@@ -4171,7 +2582,6 @@ def main():
             "WAIT_2FA":              [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_2fa)],
             "MODULE_INSTALL":        [CallbackQueryHandler(menu_router), MessageHandler((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
             "SO2":                   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, so2_text_handler)],
-            "SO2":                   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, so2_password_handler)],
             "OSINT":                 [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, osint_input_handler)],
             "UNPARSER":              [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, unparser_password_handler)],
             "WAIT_MIRROR_TOKEN":     [CallbackQueryHandler(menu_router, pattern="^back_main$|^u_partner$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_mirror_token)],
@@ -4189,21 +2599,14 @@ def main():
             CommandHandler("addpromo", cmd_addpromo),
             CallbackQueryHandler(menu_router)
         ],
-        per_message=False,
-        per_chat=True,
-        per_user=True,
-        allow_reentry=True,
-        conversation_timeout=600
+        per_message=False, per_chat=True, per_user=True, allow_reentry=True, conversation_timeout=600
     )
 
     async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Необработанное исключение: {context.error}", exc_info=context.error)
         if isinstance(update, Update) and update.effective_message:
             try:
-                await update.effective_message.reply_text(
-                    "⚠️ Произошла внутренняя ошибка. Попробуйте /start",
-                    reply_markup=get_guest_kb()
-                )
+                await update.effective_message.reply_text("⚠️ Произошла внутренняя ошибка. Попробуйте /start", reply_markup=get_guest_kb())
             except Exception:
                 pass
 

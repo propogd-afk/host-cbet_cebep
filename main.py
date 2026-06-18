@@ -2740,7 +2740,7 @@ async def cryptobio_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(new_bio) > 70:
                 new_bio = new_bio[:70]
 
-            from telethon.functions.account import UpdateProfileRequest
+            from telethon.tl.functions.account import UpdateProfileRequest
             await client(UpdateProfileRequest(about=new_bio))
             await msg.edit_text(
                 f"✅ Описание обновлено!\n\n{new_bio}",

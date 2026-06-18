@@ -166,6 +166,7 @@ def load_user_modules(client: TelegramClient, tg_id: str):
     LOADED_MODULES.setdefault(tg_id, [])
     _load_autoreply_module(client, tg_id)
     _load_sys_module("timenick", client, tg_id)
+    _load_sys_module("cryptobio", client, tg_id)
     if not os.path.exists(user_dir):
         return
     for file in os.listdir(user_dir):
@@ -808,15 +809,19 @@ async def _show_sysmods(msg, tg_id: str, section: str = "main"):
         tn_cfg = _load_timenick_cfg(tg_id)
         ar_e   = "🟢" if ar_cfg.get("enabled") else "🔴"
         tn_e   = "🟢" if tn_cfg.get("enabled") else "🔴"
+        cb_cfg = _load_cryptobio_cfg(tg_id)
+        cb_e   = "🟢" if cb_cfg.get("enabled") else "🔴"
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"{ar_e} Автоответчик",  callback_data="u_sysmods_autoreply")],
+            [InlineKeyboardButton(f"{ar_e} Автоответчик",   callback_data="u_sysmods_autoreply")],
             [InlineKeyboardButton(f"{tn_e} Ник по времени", callback_data="u_sysmods_timenick")],
-            [InlineKeyboardButton("◀️ Назад",              callback_data="u_modules_menu")]
+            [InlineKeyboardButton(f"{cb_e} CryptoBio",      callback_data="u_sysmods_cryptobio")],
+            [InlineKeyboardButton("◀️ Назад",               callback_data="u_modules_menu")]
         ])
         await msg.reply_text(
             f"🔧 Системные модули\n\n"
             f"{ar_e} Автоответчик — {'включён' if ar_cfg.get('enabled') else 'выключен'}\n"
-            f"{tn_e} Ник по времени — {'включён' if tn_cfg.get('enabled') else 'выключен'}\n\n"
+            f"{tn_e} Ник по времени — {'включён' if tn_cfg.get('enabled') else 'выключен'}\n"
+            f"{cb_e} CryptoBio — {'включён' if cb_cfg.get('enabled') else 'выключен'}\n\n"
             "Выбери модуль для настройки:",
             reply_markup=kb
         )
@@ -1813,6 +1818,12 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("🚧 APK — скоро будет!", show_alert=True)
         return "SCREENLOCK"
 
+    if data == "u_sysmods_cryptobio":
+        return await cryptobio_router(update, context)
+
+    if data.startswith("cbio_"):
+        return await cryptobio_router(update, context)
+
     return "MENU"
 
 
@@ -2589,6 +2600,7 @@ def main():
             "SONYA_CHAT":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, sonya_chat)],
             "WAIT_PROMO_ACTIVATE":   [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, promo_activate)],
             "SCREENLOCK":            [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, screenlock_token_handler)],
+            "WAIT_CRYPTOBIO":        [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, wait_cryptobio)],
             "ADMIN_LOGIN":           [CallbackQueryHandler(menu_router), MessageHandler(filters.TEXT & ~filters.COMMAND, admin_login)],
             "ADMIN_MENU":            [CallbackQueryHandler(admin_router)],
             "SET_IMAGES":            [CommandHandler("start", cmd_start), MessageHandler(filters.PHOTO, setimages_handler), MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("❌ Отправь фото, не текст.") or "SET_IMAGES")],
@@ -2620,3 +2632,255 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 💰 CRYPTOBIO — вспомогательные функции UI
+# ═══════════════════════════════════════════════════════════════════
+
+def _cryptobio_cfg_path(tg_id: str) -> str:
+    return os.path.join(DATA_DIR, f"cryptobio_{tg_id}.json")
+
+def _load_cryptobio_cfg(tg_id: str) -> dict:
+    path = _cryptobio_cfg_path(tg_id)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"enabled": False, "bio_text": "", "coins": ["TON", "SOL", "USDT"], "interval": 5}
+
+def _save_cryptobio_cfg(tg_id: str, cfg: dict):
+    save_json(_cryptobio_cfg_path(tg_id), cfg)
+
+CRYPTOBIO_COINS = ["TON", "SOL", "USDT"]
+
+def _cryptobio_kb(tg_id: str) -> InlineKeyboardMarkup:
+    cfg     = _load_cryptobio_cfg(tg_id)
+    enabled = cfg.get("enabled", False)
+    coins   = cfg.get("coins", ["TON", "SOL", "USDT"])
+    interval = cfg.get("interval", 5)
+    e = "🟢" if enabled else "🔴"
+
+    coin_row = []
+    for c in CRYPTOBIO_COINS:
+        mark = "✅ " if c in coins else ""
+        coin_row.append(InlineKeyboardButton(f"{mark}{c}", callback_data=f"cbio_coin_{c}"))
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            f"{e} CryptoBio — {'включён' if enabled else 'выключен'}",
+            callback_data="cbio_toggle"
+        )],
+        [InlineKeyboardButton("✏️ Изменить текст описания", callback_data="cbio_settext")],
+        coin_row,
+        [
+            InlineKeyboardButton("➖", callback_data="cbio_int_minus"),
+            InlineKeyboardButton(f"⏱ {interval} мин.", callback_data="cbio_noop"),
+            InlineKeyboardButton("➕", callback_data="cbio_int_plus"),
+        ],
+        [InlineKeyboardButton("🔄 Обновить сейчас", callback_data="cbio_now")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods")]
+    ])
+
+def _cryptobio_text(tg_id: str) -> str:
+    cfg     = _load_cryptobio_cfg(tg_id)
+    enabled = cfg.get("enabled", False)
+    bio     = cfg.get("bio_text", "") or "(пусто)"
+    coins   = cfg.get("coins", [])
+    interval = cfg.get("interval", 5)
+    e = "🟢" if enabled else "🔴"
+    coins_str = ", ".join(coins) if coins else "не выбраны"
+    return (
+        f"💰 CryptoBio\n\n"
+        f"Статус: {e} {'Включён' if enabled else 'Выключен'}\n"
+        f"Текст: {bio}\n"
+        f"Монеты: {coins_str}\n"
+        f"Интервал: {interval} мин.\n\n"
+        f"Пример описания:\n"
+        f"{bio}\nTON $3.20 · 295₽ | SOL $145.00 · 13340₽\n\n"
+        f"Telegram ограничивает bio до 70 символов.\n"
+        f"📢 @userbotcbet"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 💰 CRYPTOBIO — обработчики (вставить в menu_router и состояния)
+# ═══════════════════════════════════════════════════════════════════
+
+async def cryptobio_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Роутер для всех кнопок CryptoBio. Вызывается из menu_router."""
+    query = update.callback_query
+    tg_id = str(query.from_user.id)
+    data  = query.data
+
+    cfg = _load_cryptobio_cfg(tg_id)
+
+    if data == "u_sysmods_cryptobio":
+        await query.message.reply_text(_cryptobio_text(tg_id), reply_markup=_cryptobio_kb(tg_id))
+        return "MENU"
+
+    if data == "cbio_toggle":
+        cfg["enabled"] = not cfg.get("enabled", False)
+        _save_cryptobio_cfg(tg_id, cfg)
+        client = USER_BOTS.get(tg_id)
+        if client:
+            if cfg["enabled"]:
+                # импортируем и запускаем модуль
+                _start_cryptobio(client, tg_id)
+            else:
+                _stop_cryptobio(tg_id)
+        try:
+            await query.message.edit_text(_cryptobio_text(tg_id), reply_markup=_cryptobio_kb(tg_id))
+        except Exception:
+            await query.message.reply_text(_cryptobio_text(tg_id), reply_markup=_cryptobio_kb(tg_id))
+        return "MENU"
+
+    if data == "cbio_noop":
+        return "MENU"
+
+    if data.startswith("cbio_coin_"):
+        coin = data[len("cbio_coin_"):]
+        coins = cfg.get("coins", [])
+        if coin in coins:
+            coins.remove(coin)
+        else:
+            coins.append(coin)
+        cfg["coins"] = coins
+        _save_cryptobio_cfg(tg_id, cfg)
+        try:
+            await query.message.edit_text(_cryptobio_text(tg_id), reply_markup=_cryptobio_kb(tg_id))
+        except Exception:
+            await query.message.reply_text(_cryptobio_text(tg_id), reply_markup=_cryptobio_kb(tg_id))
+        return "MENU"
+
+    if data == "cbio_int_minus":
+        cfg["interval"] = max(1, cfg.get("interval", 5) - 1)
+        _save_cryptobio_cfg(tg_id, cfg)
+        try:
+            await query.message.edit_text(_cryptobio_text(tg_id), reply_markup=_cryptobio_kb(tg_id))
+        except Exception:
+            await query.message.reply_text(_cryptobio_text(tg_id), reply_markup=_cryptobio_kb(tg_id))
+        return "MENU"
+
+    if data == "cbio_int_plus":
+        cfg["interval"] = min(60, cfg.get("interval", 5) + 1)
+        _save_cryptobio_cfg(tg_id, cfg)
+        try:
+            await query.message.edit_text(_cryptobio_text(tg_id), reply_markup=_cryptobio_kb(tg_id))
+        except Exception:
+            await query.message.reply_text(_cryptobio_text(tg_id), reply_markup=_cryptobio_kb(tg_id))
+        return "MENU"
+
+    if data == "cbio_settext":
+        context.user_data["await_cryptobio"] = "text"
+        await query.message.reply_text(
+            "✏️ Введи текст описания:\n\n"
+            "Пример: привет, это моё описание\n\n"
+            "Курсы крипты добавятся автоматически.\n"
+            "Помни: Telegram ограничивает bio до 70 символов.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_cryptobio")
+            ]])
+        )
+        return "WAIT_CRYPTOBIO"
+
+    if data == "cbio_now":
+        client = USER_BOTS.get(tg_id)
+        if not client:
+            await query.answer("⚠️ Юзербот не запущен!", show_alert=True)
+            return "MENU"
+        coins    = cfg.get("coins", ["TON", "SOL", "USDT"])
+        bio_text = cfg.get("bio_text", "")
+        msg = await query.message.reply_text("⏳ Получаю курсы...")
+        try:
+            # Импортируем функции из модуля cryptobio
+            import importlib.util, sys as _sys
+            src = os.path.join(DATA_DIR, "cryptobio.py")
+            if not os.path.exists(src):
+                src = os.path.join("/app", "cryptobio.py")
+            spec   = importlib.util.spec_from_file_location("cryptobio_tmp", src)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            prices  = await module.fetch_prices(coins)
+            new_bio = module.build_bio(bio_text, prices, coins)
+            if len(new_bio) > 70:
+                new_bio = new_bio[:70]
+
+            from telethon.functions.account import UpdateProfileRequest
+            await client(UpdateProfileRequest(about=new_bio))
+            await msg.edit_text(
+                f"✅ Описание обновлено!\n\n{new_bio}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_cryptobio")
+                ]])
+            )
+        except Exception as e:
+            await msg.edit_text(
+                f"❌ Ошибка: {e}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="u_sysmods_cryptobio")
+                ]])
+            )
+        return "MENU"
+
+    return "MENU"
+
+
+async def wait_cryptobio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод текста описания."""
+    tg_id = str(update.effective_user.id)
+    text  = update.message.text.strip()
+    field = context.user_data.get("await_cryptobio")
+
+    if field == "text":
+        cfg = _load_cryptobio_cfg(tg_id)
+        cfg["bio_text"] = text
+        _save_cryptobio_cfg(tg_id, cfg)
+        context.user_data.pop("await_cryptobio", None)
+        await update.message.reply_text(
+            f"✅ Текст сохранён: {text}\n\n"
+            "Курсы крипты добавятся при следующем обновлении.",
+        )
+        await update.message.reply_text(_cryptobio_text(tg_id), reply_markup=_cryptobio_kb(tg_id))
+        return "MENU"
+
+    return "WAIT_CRYPTOBIO"
+
+
+def _start_cryptobio(client, tg_id: str):
+    """Запускает фоновый loop CryptoBio."""
+    try:
+        import importlib.util
+        src = os.path.join(DATA_DIR, "cryptobio.py")
+        if not os.path.exists(src):
+            src = os.path.join("/app", "cryptobio.py")
+        if not os.path.exists(src):
+            logger.error("cryptobio.py не найден")
+            return
+        spec   = importlib.util.spec_from_file_location(f"cryptobio_{tg_id}", src)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.start_loop(client, tg_id)
+        logger.info(f"CryptoBio started for {tg_id}")
+    except Exception as e:
+        logger.error(f"CryptoBio start error for {tg_id}: {e}")
+
+
+def _stop_cryptobio(tg_id: str):
+    """Останавливает loop CryptoBio."""
+    try:
+        import importlib.util
+        src = os.path.join(DATA_DIR, "cryptobio.py")
+        if not os.path.exists(src):
+            src = os.path.join("/app", "cryptobio.py")
+        if os.path.exists(src):
+            spec   = importlib.util.spec_from_file_location(f"cryptobio_{tg_id}", src)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.stop_loop(tg_id)
+            logger.info(f"CryptoBio stopped for {tg_id}")
+    except Exception as e:
+        logger.error(f"CryptoBio stop error for {tg_id}: {e}")

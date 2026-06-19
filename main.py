@@ -97,18 +97,28 @@ def init_system():
         save_json(SUBS_FILE, {})
     if not os.path.exists(PROMO_FILE):
         save_json(PROMO_FILE, {
-            "H82ALC4Z": {"plan": "trial", "days": 5,  "max_uses": 1,  "used_by": []},
-            "P1I99BCA": {"plan": "trial", "days": 5,  "max_uses": 1,  "used_by": []},
-            "COV2RO0X": {"plan": "trial", "days": 5,  "max_uses": 1,  "used_by": []},
-            "ATMO17ZV": {"plan": "basic", "days": 30, "max_uses": 1,  "used_by": []},
-            "32URPA1D": {"plan": "basic", "days": 30, "max_uses": 1,  "used_by": []},
-            "8TMJ3OJP": {"plan": "basic", "days": 30, "max_uses": 1,  "used_by": []},
-            "C89CTAHQ": {"plan": "pro",   "days": 30, "max_uses": 1,  "used_by": []},
-            "U18MTJR2": {"plan": "pro",   "days": 30, "max_uses": 1,  "used_by": []},
-            "SMWAHLW0": {"plan": "pro",   "days": 30, "max_uses": 1,  "used_by": []},
-            "0U72PZXB": {"plan": "trial", "days": 5,  "max_uses": 10, "used_by": []},
-            "C5DZL0T6": {"plan": "basic", "days": 30, "max_uses": 10, "used_by": []},
-            "2JOIYJR2": {"plan": "pro",   "days": 30, "max_uses": 10, "used_by": []},
+            # Одноразовые — Про 30 дней
+            "PRO-1KEP": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-2UE9": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-58WV": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-9A2X": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-9G4Z": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-D8Z8": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-EBCO": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-EHND": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-F8SK": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-G4MX": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-H2HN": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-HH81": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-I3SH": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-I9QR": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            "PRO-KC6G": {"plan": "pro", "days": 30, "max_uses": 1,  "used_by": []},
+            # Многоразовые x10 — Про 30 дней
+            "PRO-L007": {"plan": "pro", "days": 30, "max_uses": 10, "used_by": []},
+            "PRO-LAZW": {"plan": "pro", "days": 30, "max_uses": 10, "used_by": []},
+            "PRO-TT0O": {"plan": "pro", "days": 30, "max_uses": 10, "used_by": []},
+            "PRO-WAME": {"plan": "pro", "days": 30, "max_uses": 10, "used_by": []},
+            "PRO-X4ND": {"plan": "pro", "days": 30, "max_uses": 10, "used_by": []},
         })
     if not os.path.exists(PHOTO_IDS_FILE):
         save_json(PHOTO_IDS_FILE, {})
@@ -468,9 +478,8 @@ async def send_plain(msg, text: str, reply_markup):
 
 
 SUB_PLANS = {
-    "trial": {"name": "Пробная", "emoji": "🆓", "days": 5,  "price": 0,  "mod_slots": 1,   "sys_slots": 1,   "all_mods": False, "all_sys": False},
-    "basic": {"name": "Базовая", "emoji": "⭐️", "days": 30, "price": 25, "mod_slots": 3,   "sys_slots": 2,   "all_mods": False, "all_sys": False},
-    "pro":   {"name": "Про",     "emoji": "👑", "days": 30, "price": 50, "mod_slots": 999, "sys_slots": 999, "all_mods": True,  "all_sys": True},
+    "trial": {"name": "Пробная", "emoji": "🆓", "days": 5,  "price": 0,   "mod_slots": 1,   "sys_slots": 1,   "all_mods": False, "all_sys": False},
+    "pro":   {"name": "Про",     "emoji": "👑", "days": 30, "price": 100, "mod_slots": 999, "sys_slots": 999, "all_mods": True,  "all_sys": True},
 }
 SYS_MODS_LIST = ["autoreply", "timenick"]
 
@@ -541,18 +550,13 @@ async def _show_sub_menu(msg, tg_id: str):
         exp_str = "не активна"
     text = (
         "💎 Подписка\n\n"
-        f"Статус: {plan['emoji']} {plan['name']} — {exp_str}\n"
-        f"Слотов модулей: {plan['mod_slots'] if plan['mod_slots'] < 999 else '∞'}\n"
-        f"Системных модулей: {plan['sys_slots'] if plan['sys_slots'] < 999 else '∞'}\n\n"
+        f"Статус: {plan['emoji']} {plan['name']} — {exp_str}\n\n"
         "Планы:\n"
-        "🆓 Пробная (5 дн.) — бесплатно\n"
-        "⭐️ Базовая (30 дн.) — 25 ⭐\n"
-        "👑 Про (30 дн.) — 50 ⭐"
+        "🆓 Пробная (5 дн.) — выдаётся при регистрации\n"
+        "👑 Про (30 дн.) — 100 ⭐ | Всё разблокировано"
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🆓 Активировать пробную", callback_data="sub_buy_trial")],
-        [InlineKeyboardButton("⭐️ Купить Базовую — 25 ⭐", callback_data="sub_buy_basic")],
-        [InlineKeyboardButton("👑 Купить Про — 50 ⭐", callback_data="sub_buy_pro")],
+        [InlineKeyboardButton("👑 Купить Про — 100 ⭐", callback_data="sub_buy_pro")],
         [InlineKeyboardButton("◀️ Назад", callback_data="back_main")]
     ])
     await msg.reply_text(text, reply_markup=kb)
@@ -1571,29 +1575,12 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "WAIT_PROMO_ACTIVATE"
 
     if data == "sub_buy_trial":
-        sub = load_sub(tg_id)
-        if sub.get("plan") == "trial":
-            await send_plain(query.message, "⚠️ Пробная подписка уже была активирована.", None)
-            await _show_sub_menu(query.message, tg_id)
-            return "MENU"
-        from datetime import timezone, timedelta
-        expires = (datetime.now(timezone.utc) + timedelta(days=5)).timestamp()
-        sub["plan"]    = "trial"
-        sub["expires"] = expires
-        sub["chosen_sys"]  = []
-        sub["chosen_mods"] = []
-        save_sub(tg_id, sub)
-        await send_plain(query.message, "🆓 Пробная подписка активирована на 5 дней!\n\nВыбери 1 системный модуль который хочешь использовать:", InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_trial")],[InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")]]))
-        return "MENU"
-
-    if data == "sub_buy_basic":
-        from telegram import LabeledPrice
-        await context.bot.send_invoice(chat_id=query.message.chat_id, title="Базовая подписка — UserBot | Ru", description="30 дней. 3 модуля из магазина, 2 системных на выбор.", payload=f"sub_basic_{tg_id}", provider_token="", currency="XTR", prices=[LabeledPrice("Базовая подписка", 25)])
+        await send_plain(query.message, "ℹ️ Пробная подписка выдаётся автоматически при регистрации.", InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="u_sub")]]))
         return "MENU"
 
     if data == "sub_buy_pro":
         from telegram import LabeledPrice
-        await context.bot.send_invoice(chat_id=query.message.chat_id, title="Про подписка — UserBot | Ru", description="30 дней. Все модули из магазина и все системные модули.", payload=f"sub_pro_{tg_id}", provider_token="", currency="XTR", prices=[LabeledPrice("Про подписка", 50)])
+        await context.bot.send_invoice(chat_id=query.message.chat_id, title="Про подписка — UserBot | Ru", description="30 дней. Все модули и системные функции разблокированы.", payload=f"sub_pro_{tg_id}", provider_token="", currency="XTR", prices=[LabeledPrice("Про подписка", 100)])
         return "MENU"
 
     if data.startswith("sub_choose_sys_"):
@@ -2073,7 +2060,7 @@ async def _finish_auth(update, context, tg_id: str, client):
         sub["plan"] = "trial"; sub["expires"] = expires; sub["chosen_sys"] = []; sub["chosen_mods"] = []
         save_sub(tg_id, sub)
     if is_new:
-        await send_photo(msg, PHOTO_MENU, f"🎉 Добро пожаловать, {nick}!\n\nТвой юзербот успешно запущен в облаке.\n\n🆓 Тебе выдана пробная подписка на 5 дней!\n\nВыбери 1 системный модуль который хочешь попробовать:", InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_trial")],[InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")]]))
+        await send_photo(msg, PHOTO_MENU, f"🎉 Добро пожаловать, {nick}!\n\nТвой юзербот успешно запущен в облаке.\n\n🆓 Тебе выдана пробная подписка на 5 дней!\n\nДля полного доступа купи 👑 Про подписку в разделе 💎 Подписка.\n\nВыбери раздел:", get_user_kb())
     else:
         await send_photo(msg, PHOTO_MENU, f"🎉 Добро пожаловать, {nick}!\n\nТвой юзербот успешно запущен в облаке.\n\n⚡️ Сессия Telethon активна\n🧩 Модули готовы к установке\n\nВыбери раздел:", get_user_kb())
     return "MENU"
@@ -2432,14 +2419,10 @@ async def promo_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=ADMIN_TG_ID, text=f"🎟 Промокод активирован!\n\nКод: `{code}`\nЮзер: {user_nick} (`{tg_id}`)\nПлан: {plan['emoji']} {plan['name']} — {days} дн.\nИспользований: {len(promos[code]['used_by'])}/{promos[code].get('max_uses',1)}", parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         logger.warning(f"Не удалось отправить уведомление админу: {e}")
-    if plan_key == "pro":
-        await send_plain(update.message, f"✅ Код активирован!\n\n{plan['emoji']} {plan['name']} — {days} дней\nВсе модули и системные функции доступны.", get_user_kb())
-    elif plan_key == "basic":
-        await send_plain(update.message, f"✅ Код активирован!\n\n{plan['emoji']} {plan['name']} — {days} дней\n\nВыбери до 2 системных модулей (нажимай по одному):", InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_basic")],[InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_basic")]]))
-    elif plan_key == "trial":
-        await send_plain(update.message, f"✅ Код активирован!\n\n{plan['emoji']} {plan['name']} — {days} дней\n\nВыбери 1 системный модуль:", InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_trial")],[InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_trial")]]))
-    else:
-        await send_plain(update.message, f"✅ Код активирован! {plan['emoji']} {plan['name']} — {days} дней", get_user_kb())
+    await send_plain(update.message,
+        f"✅ Код активирован!\n\n{plan['emoji']} {plan['name']} — {days} дней\n"
+        + ("Все модули и системные функции разблокированы! 🔓" if plan_key == "pro" else ""),
+        get_user_kb())
     return "MENU"
 
 
@@ -2613,8 +2596,7 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     tg_id   = str(update.effective_user.id)
     payload = update.message.successful_payment.payload
     from datetime import timezone, timedelta
-    if payload.startswith("sub_basic_"):   plan_key = "basic"
-    elif payload.startswith("sub_pro_"): plan_key = "pro"
+    if payload.startswith("sub_pro_"): plan_key = "pro"
     else: return
     plan = SUB_PLANS[plan_key]; sub = load_sub(tg_id)
     now_ts = datetime.now(timezone.utc).timestamp()
@@ -2629,10 +2611,7 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await context.bot.send_message(chat_id=ADMIN_TG_ID, text=f"💳 Оплата Stars!\n\nЮзер: {user_nick} (`{tg_id}`)\nПлан: {plan['emoji']} {plan['name']} — {plan['days']} дн.\nСумма: {stars} ⭐", parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         logger.warning(f"Не удалось отправить уведомление об оплате: {e}")
-    if plan_key == "basic":
-        await update.message.reply_text(f"✅ Оплата прошла! {plan['emoji']} {plan['name']} активирована на {plan['days']} дней.\nВыбери до 2 системных модулей (нажимай по одному):", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Автоответчик", callback_data="sub_choose_sys_autoreply_basic")],[InlineKeyboardButton("🕐 Ник по времени", callback_data="sub_choose_sys_timenick_basic")]]))
-    else:
-        await update.message.reply_text(f"✅ Оплата прошла! {plan['emoji']} {plan['name']} активирована на {plan['days']} дней.\nВсе модули и системные функции доступны.", reply_markup=get_user_kb())
+    await update.message.reply_text(f"✅ Оплата прошла! {plan['emoji']} {plan['name']} активирована на {plan['days']} дней.\nВсе модули и системные функции разблокированы! 🔓", reply_markup=get_user_kb())
 
 
 
